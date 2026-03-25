@@ -36,6 +36,11 @@ class InteractionFeaturesTransformer(BaseEstimator, TransformerMixin):
         X_df[f'{self.ester_col}_x_{self.load_col}'] = (X_df[self.ester_col] - self.e_mean_) * (X_df[self.load_col] - self.l_mean_)
         X_df[f'{self.ester_col}_x_{self.conc_col}'] = (X_df[self.ester_col] - self.e_mean_) * (X_df[self.conc_col] - self.c_mean_)
         
+        # Fizikai alapú hányadosok (zéróosztás elkerülése kis konstanssal)
+        X_df[f'{self.load_col}_div_{self.temp_col}'] = X_df[self.load_col] / (X_df[self.temp_col] + 1e-6)
+        X_df[f'{self.conc_col}_div_{self.load_col}'] = X_df[self.conc_col] / (X_df[self.load_col] + 1e-6)
+        X_df[f'{self.temp_col}_div_{self.conc_col}'] = X_df[self.temp_col] / (X_df[self.conc_col] + 1e-6)
+        
         return X_df
 
     def get_feature_names_out(self, input_features=None):
@@ -44,7 +49,9 @@ class InteractionFeaturesTransformer(BaseEstimator, TransformerMixin):
         new_features = [
             f'{self.load_col}_x_{self.temp_col}', f'{self.load_col}_x_{self.conc_col}',
             f'{self.temp_col}_x_{self.conc_col}', f'{self.ester_col}_x_{self.temp_col}',
-            f'{self.ester_col}_x_{self.load_col}', f'{self.ester_col}_x_{self.conc_col}'
+            f'{self.ester_col}_x_{self.load_col}', f'{self.ester_col}_x_{self.conc_col}',
+            f'{self.load_col}_div_{self.temp_col}', f'{self.conc_col}_div_{self.load_col}',
+            f'{self.temp_col}_div_{self.conc_col}'
         ]
         return np.array(list(input_features) + new_features)
 
