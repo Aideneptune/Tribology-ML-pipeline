@@ -2,6 +2,27 @@ import pandas as pd
 import numpy as np
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.linear_model import LinearRegression
+from sklearn.preprocessing import StandardScaler
+
+class PandasStandardScaler(BaseEstimator, TransformerMixin):
+    """Egyedi StandardScaler, amely DataFrame-et ad vissza az oszlopnevek megtartásához."""
+    def __init__(self):
+        self.scaler = StandardScaler()
+        self.feature_names_in_ = None
+
+    def fit(self, X, y=None):
+        self.scaler.fit(X, y)
+        if isinstance(X, pd.DataFrame):
+            self.feature_names_in_ = X.columns.tolist()
+        return self
+
+    def transform(self, X):
+        X_scaled = self.scaler.transform(X)
+        cols = X.columns if isinstance(X, pd.DataFrame) else self.feature_names_in_
+        return pd.DataFrame(X_scaled, columns=cols, index=X.index if isinstance(X, pd.DataFrame) else None)
+
+    def get_feature_names_out(self, input_features=None):
+        return np.array(self.feature_names_in_) if self.feature_names_in_ is not None else None
 
 class InteractionFeaturesTransformer(BaseEstimator, TransformerMixin):
     """Egyedi transzformátor interakciós jellemzők generálásához tanult átlagokkal."""
@@ -61,7 +82,8 @@ class VIFSelector(BaseEstimator, TransformerMixin):
         self.threshold = threshold
         self.sample_size = sample_size
         self.protected_cols = protected_cols if protected_cols else [
-            'Load', 'Temperature', 'Concentration', 'Esterified', 'Time', 'Log_Time', 'Time_Squared'
+            'Load', 'Temperature', 'Concentration', 'Esterified', 'Time', 'Log_Time', 'Time_Squared',
+            'Load_div_Temperature', 'Concentration_div_Load', 'Temperature_div_Concentration'
         ]
         self.selected_features_ = []
         self.feature_names_in_ = None
