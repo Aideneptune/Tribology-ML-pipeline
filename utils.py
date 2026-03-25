@@ -144,7 +144,7 @@ def generate_html_report(results, xlsx_files, full_df, desc_df, html_path, resul
         th, td {{ border: 1px solid #000; padding: 8px; text-align: right; }}
         th {{ background-color: #f2f2f2; font-weight: bold; text-align: center; }}
         td:first-child, th:first-child {{ text-align: left; }}
-        .img-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(500px, 1fr)); gap: 20px; margin-top: 20px; }}
+        .img-grid {{ display: grid; grid-template-columns: 1fr; gap: 20px; margin-top: 20px; }}
         .img-card {{ text-align: center; page-break-inside: avoid; }}
         img {{ max-width: 100%; height: auto; border: 1px solid #ccc; }}
         .footer {{ margin-top: 40px; text-align: center; font-size: 0.9em; color: #000; }}
@@ -210,8 +210,10 @@ def generate_html_report(results, xlsx_files, full_df, desc_df, html_path, resul
         rmse_str = f"{res['RMSE_Train']:.4f}/{res['RMSE_Test']:.4f}"
         rmse_split_str = f"{res['RMSE_COF']:.4f}/{res['RMSE_FAI']:.4f}"
         
+        row_style = ' style="font-weight: bold;"' if res['Name'] == best_model_res['Name'] else ''
+        
         html_content += f"""
-                    <tr>
+                    <tr{row_style}>
                         <td><strong>{res['Name']}</strong></td>
                         <td>{r2_str}</td>
                         <td>{r2_split_str}</td>
@@ -271,7 +273,9 @@ def generate_html_report(results, xlsx_files, full_df, desc_df, html_path, resul
         html_content += f"""
             <div class="img-card">
                 <h3>{filename.replace('.png', '').replace('_', ' ')}</h3>
-                <img src="{filename}" alt="{filename}">
+                <a href="{filename}" target="_blank">
+                    <img src="{filename}" alt="{filename}">
+                </a>
                 <p style="font-size: 0.9em; color: #666; font-style: italic;">{description}</p>
             </div>"""
 
