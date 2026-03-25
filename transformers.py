@@ -5,7 +5,11 @@ from sklearn.linear_model import LinearRegression
 
 class InteractionFeaturesTransformer(BaseEstimator, TransformerMixin):
     """Egyedi transzformátor interakciós jellemzők generálásához tanult átlagokkal."""
-    def __init__(self):
+    def __init__(self, load_col='Load', temp_col='Temperature', conc_col='Concentration', ester_col='Esterified'):
+        self.load_col = load_col
+        self.temp_col = temp_col
+        self.conc_col = conc_col
+        self.ester_col = ester_col
         self.l_mean_ = 0.0
         self.t_mean_ = 0.0
         self.c_mean_ = 0.0
@@ -14,10 +18,10 @@ class InteractionFeaturesTransformer(BaseEstimator, TransformerMixin):
 
     def fit(self, X, y=None):
         if isinstance(X, pd.DataFrame):
-            self.l_mean_ = X['Load'].mean()
-            self.t_mean_ = X['Temperature'].mean()
-            self.c_mean_ = X['Concentration'].mean()
-            self.e_mean_ = X['Esterified'].mean()
+            self.l_mean_ = X[self.load_col].mean()
+            self.t_mean_ = X[self.temp_col].mean()
+            self.c_mean_ = X[self.conc_col].mean()
+            self.e_mean_ = X[self.ester_col].mean()
             self.feature_names_in_ = X.columns.tolist()
         return self
 
@@ -25,19 +29,23 @@ class InteractionFeaturesTransformer(BaseEstimator, TransformerMixin):
         X_df = X.copy() if isinstance(X, pd.DataFrame) else pd.DataFrame(X, columns=self.feature_names_in_)
         
         # Interakciók generálása a fit során mentett átlagokkal
-        X_df['Load_x_Temp'] = (X_df['Load'] - self.l_mean_) * (X_df['Temperature'] - self.t_mean_)
-        X_df['Load_x_Conc'] = (X_df['Load'] - self.l_mean_) * (X_df['Concentration'] - self.c_mean_)
-        X_df['Temp_x_Conc'] = (X_df['Temperature'] - self.t_mean_) * (X_df['Concentration'] - self.c_mean_)
-        X_df['Ester_x_Temp'] = (X_df['Esterified'] - self.e_mean_) * (X_df['Temperature'] - self.t_mean_)
-        X_df['Ester_x_Load'] = (X_df['Esterified'] - self.e_mean_) * (X_df['Load'] - self.l_mean_)
-        X_df['Ester_x_Conc'] = (X_df['Esterified'] - self.e_mean_) * (X_df['Concentration'] - self.c_mean_)
+        X_df[f'{self.load_col}_x_{self.temp_col}'] = (X_df[self.load_col] - self.l_mean_) * (X_df[self.temp_col] - self.t_mean_)
+        X_df[f'{self.load_col}_x_{self.conc_col}'] = (X_df[self.load_col] - self.l_mean_) * (X_df[self.conc_col] - self.c_mean_)
+        X_df[f'{self.temp_col}_x_{self.conc_col}'] = (X_df[self.temp_col] - self.t_mean_) * (X_df[self.conc_col] - self.c_mean_)
+        X_df[f'{self.ester_col}_x_{self.temp_col}'] = (X_df[self.ester_col] - self.e_mean_) * (X_df[self.temp_col] - self.t_mean_)
+        X_df[f'{self.ester_col}_x_{self.load_col}'] = (X_df[self.ester_col] - self.e_mean_) * (X_df[self.load_col] - self.l_mean_)
+        X_df[f'{self.ester_col}_x_{self.conc_col}'] = (X_df[self.ester_col] - self.e_mean_) * (X_df[self.conc_col] - self.c_mean_)
         
         return X_df
 
     def get_feature_names_out(self, input_features=None):
         if input_features is None:
             input_features = self.feature_names_in_
-        new_features = ['Load_x_Temp', 'Load_x_Conc', 'Temp_x_Conc', 'Ester_x_Temp', 'Ester_x_Load', 'Ester_x_Conc']
+        new_features = [
+            f'{self.load_col}_x_{self.temp_col}', f'{self.load_col}_x_{self.conc_col}',
+            f'{self.temp_col}_x_{self.conc_col}', f'{self.ester_col}_x_{self.temp_col}',
+            f'{self.ester_col}_x_{self.load_col}', f'{self.ester_col}_x_{self.conc_col}'
+        ]
         return np.array(list(input_features) + new_features)
 
 class VIFSelector(BaseEstimator, TransformerMixin):
