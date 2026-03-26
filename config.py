@@ -44,6 +44,7 @@ SPARSITY_WEIGHT = 0.3
 
 # --- AKADÉMIAI ÁBRAFORMÁZÁS BEÁLLÍTÁSA ---
 def set_academic_plot_style():
+    plt.style.use('default')
     plt.rcParams.update({
         'font.family': 'sans-serif',
         'font.sans-serif': ['Tahoma'],
@@ -52,12 +53,18 @@ def set_academic_plot_style():
         'xtick.labelsize': 11,
         'ytick.labelsize': 11,
         'legend.fontsize': 11,
-        'figure.figsize': (6.3, 3.15)
+        'figure.figsize': (6.3, 3.15),
+        'axes.facecolor': 'white',
+        'figure.facecolor': 'white',
+        'text.color': 'black',
+        'axes.labelcolor': 'black',
+        'xtick.color': 'black',
+        'ytick.color': 'black'
     })
 
 # --- MODELL TANÍTÁSI PARAMÉTEREK ---
 TEST_SIZE = 0.2
-CV_SPLITS = 5
+CV_SPLITS = 10
 SEARCH_ITERATIONS = 50
 
 # --- OSZLOPNEVEK ---
@@ -218,7 +225,7 @@ models_config = {
             inverse_func=np.exp
         ),
         "params": {
-            "regressor__ridge__alpha": [0.1, 1.0, 10.0, 100.0]
+            "regressor__ridge__alpha": [0.001, 0.01, 0.1, 1.0]
         }
     }
 }
