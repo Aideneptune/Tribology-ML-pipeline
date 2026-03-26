@@ -84,8 +84,13 @@ else:
                 if c in df.columns:
                     df[c] = pd.to_numeric(df[c], errors='coerce')
             
+            # Helyi Outlier szűrés: fizikailag képtelen COF értékek helyettesítése
+            df.loc[df['COF'] > 1.0, 'COF'] = np.nan
+            df['COF'] = df['COF'].ffill().bfill()
+            
             df = df.dropna(subset=['Concentration', 'COF', 'Friction absolute integral', 'Load', 'Temperature'])
             df = df[(df['Temperature'] != 0) & (df['Load'] != 0)]
+            df = df[df['Time'] > 10.0]  # Kezdeti vágás (Hard Trim): első 10 mp eldobása
             
             df = df.reset_index(drop=True)
             df = df.groupby(df.index // config.DOWNSAMPLING_RATE).mean(numeric_only=True).reset_index(drop=True)
@@ -99,10 +104,11 @@ else:
                     plt.figure(figsize=(6.3, 3.15))
                     plt.plot(df['Time'], df['COF'], label='Eredeti jel', color='silver', alpha=0.7)
 
-                df['COF'] = df['COF'].rolling(window=config.ROLLING_WINDOW_SIZE, min_periods=1, center=False).mean()
+                df['COF'] = df['COF'].rolling(window=5, min_periods=1, center=True).median()
+                df['COF'] = df['COF'].ewm(span=config.ROLLING_WINDOW_SIZE, min_periods=1).mean()
 
                 if len(all_data) == 0:
-                    plt.plot(df['Time'], df['COF'], label='Filtered signal (Rolling Mean)', color='orange', linewidth=2.5)
+                    plt.plot(df['Time'], df['COF'], label='Filtered signal (Median + EWM)', color='orange', linewidth=2.5)
                     plt.xlabel("Time [s]")
                     plt.ylabel("Coefficient of friction (COF) [-]")
                     plt.legend()
@@ -204,7 +210,7 @@ grid_df['Time'] = 7200
 grid_df = create_features(grid_df)
 grid_df = grid_df[X_cols_raw]
 
-gkf_cv = GroupKFold(n_splits=5)
+gkf_cv = GroupKFold(n_splits=config.CV_SPLITS)
 
 # --- Prepare template_df for Optimum Curve Generations ---
 first_file_id = os.path.basename(xlsx_files[0])
@@ -256,16 +262,19 @@ else:
         
         if cfg["params"]:
             fit_params = {}
-            if "Random Forest" in name: fit_params['rf__sample_weight'] = weights_train
-            elif "XGBoost" in name: fit_params['xgb__sample_weight'] = weights_train
-            elif "LightGBM" in name: fit_params['lgbm__sample_weight'] = weights_train
-            elif "CatBoost" in name: fit_params['cat__sample_weight'] = weights_train
-            elif "Polynomial" in name: fit_params['ridge__sample_weight'] = weights_train
+            if "Random Forest" in name: fit_params['rf__sample_weight'] = weights_train.values
+            elif "XGBoost" in name: fit_params['xgb__sample_weight'] = weights_train.values
+            elif "LightGBM" in name: fit_params['lgbm__sample_weight'] = weights_train.values
+            elif "CatBoost" in name: fit_params['cat__sample_weight'] = weights_train.values
+            elif "Polynomial" in name: fit_params['ridge__sample_weight'] = weights_train.values
 
             def objective(trial):
                 sampled_params = {}
                 for param_name, param_values in cfg["params"].items():
-                    if all(x is None or isinstance(x, str) for x in param_values) or any(x is None for x in param_values):
+                    if any(isinstance(x, (tuple, list)) for x in param_values):
+                        idx = trial.suggest_categorical(param_name + "_idx", list(range(len(param_values))))
+                        sampled_params[param_name] = param_values[idx]
+                    elif all(x is None or isinstance(x, str) for x in param_values) or any(x is None for x in param_values):
                         sampled_params[param_name] = trial.suggest_categorical(param_name, param_values)
                     elif all(isinstance(x, bool) for x in param_values):
                         sampled_params[param_name] = trial.suggest_categorical(param_name, param_values)
@@ -284,9 +293,10 @@ else:
                 model = clone(cfg["model"])
                 model.set_params(**sampled_params)
                 try:
-                    cv_scores = cross_validate(model, X_train, y_train, cv=gkf_cv, groups=groups_train, scoring='r2', fit_params=fit_params, n_jobs=-1, error_score='raise')
+                    cv_scores = cross_validate(model, X_train, y_train, cv=gkf_cv, groups=groups_train, scoring='r2', params=fit_params, n_jobs=1, error_score='raise')
                     return np.mean(cv_scores['test_score'])
-                except Exception:
+                except Exception as e:
+                    print(f"  Trial failed: {e}")
                     return -100.0
 
             optuna.logging.set_verbosity(optuna.logging.WARNING)
@@ -294,7 +304,32 @@ else:
             def logging_callback(study, frozen_trial):
                 print(f"  Trial {frozen_trial.number} finished with R2 CV: {frozen_trial.value:.4f} | Best so far: {study.best_value:.4f} (Trial {study.best_trial.number})")
             study.optimize(objective, n_trials=50, callbacks=[logging_callback])
-            best_params = study.best_params
+
+            try:
+                import optuna.visualization.matplotlib as ovm
+                if len(study.trials) > 1:
+                    ovm.plot_param_importances(study)
+                    safe_model_name = name.replace(' ', '_').replace('(', '').replace(')', '')
+                    plot_filename = f"Optuna_Importances_{safe_model_name}.png"
+                    fig = plt.gcf()
+                    fig.set_size_inches(10, 6)
+                    plt.title(f"Hyperparameter Importances ({name})", fontsize=10)
+                    plt.tight_layout()
+                    plt.savefig(os.path.join(config.RESULTS_DIR, plot_filename), dpi=config.PLOT_SETTINGS['dpi'], bbox_inches='tight', pad_inches=0.1)
+                    plt.close()
+                    dynamic_descriptions[plot_filename] = f"Optuna Hyperparameter Importances for {name}."
+            except Exception as e:
+                print(f"  Could not generate Optuna plot for {name}: {e}")
+
+            best_params_raw = study.best_params
+            best_params = {}
+            for k, v in best_params_raw.items():
+                if k.endswith("_idx"):
+                    orig_k = k[:-4]
+                    best_params[orig_k] = cfg["params"][orig_k][v]
+                else:
+                    best_params[k] = v
+
             best_estimator = clone(cfg["model"])
             best_estimator.set_params(**best_params)
         else:
@@ -302,11 +337,11 @@ else:
             best_params = "Default"
 
         fit_params_final = {}
-        if "Random Forest" in name: fit_params_final['rf__sample_weight'] = weights_train
-        elif "XGBoost" in name: fit_params_final['xgb__sample_weight'] = weights_train
-        elif "LightGBM" in name: fit_params_final['lgbm__sample_weight'] = weights_train
-        elif "CatBoost" in name: fit_params_final['cat__sample_weight'] = weights_train
-        elif "Polynomial" in name: fit_params_final['ridge__sample_weight'] = weights_train
+        if "Random Forest" in name: fit_params_final['rf__sample_weight'] = weights_train.values
+        elif "XGBoost" in name: fit_params_final['xgb__sample_weight'] = weights_train.values
+        elif "LightGBM" in name: fit_params_final['lgbm__sample_weight'] = weights_train.values
+        elif "CatBoost" in name: fit_params_final['cat__sample_weight'] = weights_train.values
+        elif "Polynomial" in name: fit_params_final['ridge__sample_weight'] = weights_train.values
             
         best_estimator.fit(X_train, y_train, **fit_params_final)
         tuning_training_time = time.time() - start_model_total
@@ -531,12 +566,12 @@ print(f"\nBest model found: {best_model_name} with average R2 CV: {best_r2_overa
 print(f"Retraining {best_model_name} on the full dataset...")
 
 fit_params_full = {}
-if "Ensemble" in best_model_name: fit_params_full['sample_weight'] = full_df['Sample_Weight']
-elif "Random Forest" in best_model_name: fit_params_full['rf__sample_weight'] = full_df['Sample_Weight']
-elif "XGBoost" in best_model_name: fit_params_full['xgb__sample_weight'] = full_df['Sample_Weight']
-elif "LightGBM" in best_model_name: fit_params_full['lgbm__sample_weight'] = full_df['Sample_Weight']
-elif "CatBoost" in best_model_name: fit_params_full['cat__sample_weight'] = full_df['Sample_Weight']
-elif "Polynomial" in best_model_name: fit_params_full['ridge__sample_weight'] = full_df['Sample_Weight']
+if "Ensemble" in best_model_name: fit_params_full['sample_weight'] = full_df['Sample_Weight'].values
+elif "Random Forest" in best_model_name: fit_params_full['rf__sample_weight'] = full_df['Sample_Weight'].values
+elif "XGBoost" in best_model_name: fit_params_full['xgb__sample_weight'] = full_df['Sample_Weight'].values
+elif "LightGBM" in best_model_name: fit_params_full['lgbm__sample_weight'] = full_df['Sample_Weight'].values
+elif "CatBoost" in best_model_name: fit_params_full['cat__sample_weight'] = full_df['Sample_Weight'].values
+elif "Polynomial" in best_model_name: fit_params_full['ridge__sample_weight'] = full_df['Sample_Weight'].values
 best_model_overall.fit(X, Y, **fit_params_full)
 
 optimum_results = {}
@@ -621,16 +656,22 @@ else:
     # Use top 3 models for uncertainty calculation
     top3_doe_models = [r['Model'] for r in sorted(results, key=lambda x: x['R2_CV'], reverse=True)[:3]]
     
-    grid_doe = global_vif.transform(global_interact.transform(grid_df))
+    print("Building DoE grid (Esterified only)...")
+    doe_combos = list(itertools.product(range_conc, range_load, range_temp, [1]))
+    doe_grid_df = pd.DataFrame(doe_combos, columns=['Concentration', 'Load', 'Temperature', 'Esterified'])
+    doe_grid_df['Time'] = 7200
+    doe_grid_df = create_features(doe_grid_df)[X_cols_raw]
+    
+    grid_doe = global_vif.transform(global_interact.transform(doe_grid_df))
 
     print("Predicting uncertainty on the parameter grid using top 3 models...")
     doe_preds = np.array([np.maximum(model.predict(grid_doe), config.PREDICTION_LOWER_BOUND) for model in top3_doe_models])
     std_cof = np.std(doe_preds[:, :, 0], axis=0)
     std_fai = np.std(doe_preds[:, :, 1], axis=0)
 
-    doe_features = ['Concentration', 'Load', 'Temperature']
+    doe_features = ['Concentration', 'Load', 'Temperature', 'Esterified']
     scaler_doe = MinMaxScaler()
-    X_grid_scaled = pd.DataFrame(scaler_doe.fit_transform(grid_df[doe_features]), columns=doe_features)
+    X_grid_scaled = pd.DataFrame(scaler_doe.fit_transform(doe_grid_df[doe_features]), columns=doe_features)
     X_existing_scaled = pd.DataFrame(scaler_doe.transform(full_df[doe_features]), columns=doe_features)
 
     nbrs = NearestNeighbors(n_neighbors=1).fit(X_existing_scaled)
@@ -641,14 +682,14 @@ else:
     avg_uncertainty = (norm_std_cof + norm_std_fai) / 2
     norm_dist = (dist_metric - dist_metric.min()) / (dist_metric.max() - dist_metric.min() + 1e-9)
 
-    doe_grid = grid_df.copy()
+    doe_grid = doe_grid_df.copy()
     doe_grid['Uncertainty_COF'] = std_cof
     doe_grid['Uncertainty_FAI'] = std_fai
     doe_grid['Distance'] = dist_metric
     doe_grid['Score'] = config.UNCERTAINTY_WEIGHT * avg_uncertainty + config.SPARSITY_WEIGHT * norm_dist
 
-    existing_set = set((round(row['Concentration'], 2), int(row['Load']), int(row['Temperature'])) for _, row in full_df[['Concentration', 'Load', 'Temperature']].iterrows())
-    doe_candidates = doe_grid[~doe_grid.apply(lambda row: (round(row['Concentration'], 2), int(row['Load']), int(row['Temperature'])) in existing_set, axis=1)].sort_values(by='Score', ascending=False)
+    existing_set = set((round(row['Concentration'], 2), int(row['Load']), int(row['Temperature']), int(row['Esterified'])) for _, row in full_df[['Concentration', 'Load', 'Temperature', 'Esterified']].iterrows())
+    doe_candidates = doe_grid[~doe_grid.apply(lambda row: (round(row['Concentration'], 2), int(row['Load']), int(row['Temperature']), int(row['Esterified'])) in existing_set, axis=1)].sort_values(by='Score', ascending=False)
 
     final_suggestions = []
     candidates_pool = doe_candidates.copy()
@@ -658,7 +699,9 @@ else:
         final_suggestions.append(best_candidate)
         mask_load = (candidates_pool['Load'] >= best_candidate['Load'] - 20) & (candidates_pool['Load'] <= best_candidate['Load'] + 20)
         mask_temp = (candidates_pool['Temperature'] >= best_candidate['Temperature'] - 10) & (candidates_pool['Temperature'] <= best_candidate['Temperature'] + 10)
-        candidates_pool.loc[mask_load & mask_temp, 'Score'] *= 0.5
+        mask_conc = (candidates_pool['Concentration'] >= best_candidate['Concentration'] - 0.1) & (candidates_pool['Concentration'] <= best_candidate['Concentration'] + 0.1)
+        mask_ester = (candidates_pool['Esterified'] == best_candidate['Esterified'])
+        candidates_pool.loc[mask_load & mask_temp & mask_conc & mask_ester, 'Score'] *= 0.5
         candidates_pool = candidates_pool.drop(best_candidate.name).sort_values(by='Score', ascending=False)
 
     doe_suggestions = pd.DataFrame(final_suggestions)
@@ -670,7 +713,7 @@ else:
 
 doe_img_files = []
 for i, (_, row) in enumerate(doe_suggestions.iterrows()):
-    sim_input = create_features(pd.DataFrame({'Time': template_df['Time'], 'Load': row['Load'], 'Temperature': row['Temperature'], 'Concentration': row['Concentration'], 'Esterified': config.PLOT_ESTERIFIED_STATE}))[X_cols_raw]
+    sim_input = create_features(pd.DataFrame({'Time': template_df['Time'], 'Load': row['Load'], 'Temperature': row['Temperature'], 'Concentration': row['Concentration'], 'Esterified': row['Esterified']}))[X_cols_raw]
     sim_input_trans = global_vif.transform(global_interact.transform(sim_input))
     curve_preds = np.maximum(best_model_overall.predict(sim_input_trans), config.PREDICTION_LOWER_BOUND)
     fig, ax = plt.subplots(figsize=(6.3, 3.15))
@@ -678,8 +721,11 @@ for i, (_, row) in enumerate(doe_suggestions.iterrows()):
     plt.ylim(bottom=0.0, top=0.3)
     ax.yaxis.set_major_formatter(FuncFormatter(lambda y, _: f'{y:g}'))
     plt.grid(True, linestyle='--', alpha=0.4)
+    plt.xlabel('Time [s]')
+    plt.ylabel('Coefficient of friction (COF) [-]')
     fname = f"DoE_Suggestion_{i+1}.png"
-    dynamic_descriptions[fname] = f"DoE suggestion #{i+1}: {row['Concentration']:.2f}% | {int(row['Load'])}N | {int(row['Temperature'])}°C."
+    ester_str = "Esterified" if row['Esterified'] == 1 else "Base Oil"
+    dynamic_descriptions[fname] = f"DoE suggestion #{i+1}: {row['Concentration']:.2f}% | {int(row['Load'])}N | {int(row['Temperature'])}°C | {ester_str} (Predicted by: {best_model_name})."
     plt.savefig(os.path.join(config.RESULTS_DIR, fname), dpi=config.PLOT_SETTINGS['dpi'], bbox_inches='tight', pad_inches=0.1)
     plt.close()
     doe_img_files.append(fname)
@@ -698,6 +744,7 @@ if best_res['Feature_Imp'] is not None:
     
     plt.figure(figsize=(6.3, 3.15))
     plt.barh(display_feats, sorted_imp, color='purple')
+    plt.xlabel("Feature Importance")
     dynamic_descriptions["Feature_importance.png"] = f"Feature importance ({best_model_name})."
     plt.savefig(os.path.join(config.RESULTS_DIR, "Feature_importance.png"), dpi=config.PLOT_SETTINGS['dpi'], bbox_inches='tight', pad_inches=0.1)
     plt.close()
@@ -879,7 +926,7 @@ dynamic_descriptions["Concentration_Trend_Analysis.png"] = f"Concentration Trend
 plt.savefig(os.path.join(config.RESULTS_DIR, "Concentration_Trend_Analysis.png"), dpi=config.PLOT_SETTINGS['dpi'], bbox_inches='tight', pad_inches=0.1)
 plt.close()
 
-fig = plt.figure(figsize=(6.3, 3.15))
+fig = plt.figure(figsize=(10, 8))
 ax = fig.add_subplot(111, projection='3d')
 subset = full_df.groupby(['Load', 'Temperature', 'Concentration', 'Esterified'])['File_ID'].nunique().reset_index(name='Count')
 ax.scatter(subset['Load'], subset['Temperature'], subset['Concentration'], c=subset['Esterified'], cmap='coolwarm', s=subset['Count']*100, alpha=0.6)
@@ -887,10 +934,14 @@ ax.set_xlabel('Load [N]', labelpad=10)
 ax.set_ylabel('Temperature [°C]', labelpad=10)
 ax.set_zlabel('Concentration [wt%]', labelpad=10)
 ax.tick_params(axis='both', which='major', labelsize=9)
+
+custom_lines = [Line2D([0], [0], marker='o', color='w', markerfacecolor='blue', markersize=10),
+                Line2D([0], [0], marker='o', color='w', markerfacecolor='red', markersize=10)]
+ax.legend(custom_lines, ['Base Oil (0)', 'Esterified (1)'], loc='upper left', bbox_to_anchor=(1.05, 1))
 plt.savefig(os.path.join(config.RESULTS_DIR, "3D_distribution_of_input_data.png"), dpi=config.PLOT_SETTINGS['dpi'], bbox_inches='tight', pad_inches=0.1)
 plt.close()
 
-fig = plt.figure(figsize=(6.3, 3.15))
+fig = plt.figure(figsize=(12, 10))
 ax = fig.add_subplot(111, projection='3d')
 ax.scatter(full_df['Load'], full_df['Temperature'], full_df['Concentration'], 
            c='blue', marker='o', s=15, alpha=0.5, label='Existing Measurements')
@@ -898,17 +949,24 @@ ax.scatter(doe_suggestions['Load'], doe_suggestions['Temperature'], doe_suggesti
            c='red', s=800, alpha=0.2, label='DoE Space Coverage')
 ax.scatter(doe_suggestions['Load'], doe_suggestions['Temperature'], doe_suggestions['Concentration'], 
            c='red', marker='x', s=50, label='DoE Points')
-# Note: adjustText library is for 2D plots. For 3D, we use smaller fonts and slight offsets to reduce overlap.
+
+# Segédvonalak (stems) és feliratok generálása a DoE pontokhoz
 for _, row in doe_suggestions.iterrows():
-    ax.text(row['Load'], row['Temperature'], row['Concentration'] + 0.02, # Slight vertical offset
-            f" C:{row['Concentration']:.2f}, L:{int(row['Load'])}, T:{int(row['Temperature'])}",
-            color='black', fontsize=6, ha='left', va='bottom',
-            bbox=dict(facecolor='white', alpha=0.8, edgecolor='none', boxstyle='round,pad=0.2'))
+    # Függőleges vonal az XY síkig (Concentration = 0)
+    ax.plot([row['Load'], row['Load']], [row['Temperature'], row['Temperature']], [0, row['Concentration']], color='red', linestyle='--', linewidth=1.5, alpha=0.6)
+    # Vízszintes vonalak a tengelyekhez az XY síkon
+    ax.plot([10, row['Load']], [row['Temperature'], row['Temperature']], [0, 0], color='gray', linestyle=':', linewidth=1.0, alpha=0.5)
+    ax.plot([row['Load'], row['Load']], [40, row['Temperature']], [0, 0], color='gray', linestyle=':', linewidth=1.0, alpha=0.5)
+    
+    ax.text(row['Load'], row['Temperature'], row['Concentration'] + 0.03, # Nagyobb függőleges eltolás
+            f" C: {row['Concentration']:.2f}\n L: {int(row['Load'])}N\n T: {int(row['Temperature'])}°C",
+            color='black', fontsize=9, ha='left', va='bottom',
+            bbox=dict(facecolor='white', alpha=0.9, edgecolor='red', boxstyle='round,pad=0.4'))
 ax.set_xlabel('Load [N]', labelpad=10)
 ax.set_ylabel('Temperature [°C]', labelpad=10)
 ax.set_zlabel('Concentration [wt%]', labelpad=10)
-ax.tick_params(axis='both', which='major', labelsize=9)
-plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=9)
+ax.tick_params(axis='both', which='major', labelsize=10)
+plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=11, markerscale=0.5)
 plt.savefig(os.path.join(config.RESULTS_DIR, "DoE_3D_map.png"), dpi=config.PLOT_SETTINGS['dpi'], bbox_inches='tight', pad_inches=0.1)
 plt.close()
 
@@ -927,7 +985,7 @@ plt.ylabel("Temperature [°C]")
 plt.savefig(os.path.join(config.RESULTS_DIR, "COF_heatmap.png"), dpi=config.PLOT_SETTINGS['dpi'], bbox_inches='tight', pad_inches=0.1)
 plt.close()
 
-plt.figure(figsize=(6.3, 3.15))
+plt.figure(figsize=(10, 8))
 corr_cols = ['Time', 'Load', 'Temperature', 'Concentration', 'Esterified', 'COF', 'Friction absolute integral']
 corr_labels = ['Time', 'Load', 'Temperature', 'Concentration', 'Esterified', 'COF', 'Friction Absolute Integral']
 corr_matrix = full_df[corr_cols].corr()
@@ -942,7 +1000,7 @@ plt.tight_layout()
 plt.savefig(os.path.join(config.RESULTS_DIR, "Correlation_matrix.png"), dpi=config.PLOT_SETTINGS['dpi'], bbox_inches='tight', pad_inches=0.1)
 plt.close()
 
-plot_learning_curve(best_model_overall, X, Y, cv=GroupShuffleSplit(n_splits=5, test_size=0.2, random_state=config.RANDOM_SEED), results_dir=config.RESULTS_DIR, groups=groups, num_files=len(np.unique(groups)))
+plot_learning_curve(best_model_overall, X, Y, cv=GroupShuffleSplit(n_splits=config.CV_SPLITS, test_size=0.2, random_state=config.RANDOM_SEED), results_dir=config.RESULTS_DIR, groups=groups, num_files=len(np.unique(groups)))
 dynamic_descriptions["Learning_Curve.png"] = f"Learning curve ({best_model_name})."
 
 html_path = os.path.join(config.RESULTS_DIR, "Eredmenyek_Riport.html")
