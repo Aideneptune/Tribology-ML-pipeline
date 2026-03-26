@@ -180,8 +180,8 @@ def generate_html_report(results, xlsx_files, full_df, desc_df, html_path, resul
             <li><strong>Number of processed files:</strong> {len(xlsx_files)}</li>
             <li><strong>Dataset size:</strong> {len(full_df)} rows</li>
             <li><strong>Train/Test split:</strong> 80%/20%</li>
-            <li><strong>Cross-validation (CV):</strong> GroupKFold (5-fold)</li>
-            <li><strong>Hyperparameter optimization:</strong> RandomizedSearchCV (50 iterations, 5-fold CV)</li>"""
+            <li><strong>Cross-validation (CV):</strong> GroupKFold (10-fold)</li>
+            <li><strong>Hyperparameter optimization:</strong> Optuna Bayesian Optimization (TPE, 50 trials, 10-fold CV)</li>"""
             
     if timing_stats:
         html_content += f"""
