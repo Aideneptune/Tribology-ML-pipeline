@@ -84,14 +84,9 @@ else:
                 if c in df.columns:
                     df[c] = pd.to_numeric(df[c], errors='coerce')
             
-            # Helyi Outlier szűrés: fizikailag képtelen COF értékek helyettesítése
-            df.loc[df['COF'] > 1.0, 'COF'] = np.nan
-            df['COF'] = df['COF'].ffill().bfill()
-            
             df = df.dropna(subset=['Concentration', 'COF', 'Friction absolute integral', 'Load', 'Temperature'])
             df = df[(df['Temperature'] != 0) & (df['Load'] != 0)]
-            df = df[df['Time'] > 10.0]  # Kezdeti vágás (Hard Trim): első 10 mp eldobása
-            
+            # df = df[df['Time'] > 10.0] # Kezdeti vágás (Hard Trim): első 10 mp eldobása - Visszaállítva a korábbi állapotra
             df = df.reset_index(drop=True)
             df = df.groupby(df.index // config.DOWNSAMPLING_RATE).mean(numeric_only=True).reset_index(drop=True)
             df['File_ID'] = os.path.basename(filepath)
@@ -104,11 +99,9 @@ else:
                     plt.figure(figsize=(6.3, 3.15))
                     plt.plot(df['Time'], df['COF'], label='Eredeti jel', color='silver', alpha=0.7)
 
-                df['COF'] = df['COF'].rolling(window=5, min_periods=1, center=True).median()
-                df['COF'] = df['COF'].ewm(span=config.ROLLING_WINDOW_SIZE, min_periods=1).mean()
-
+                df['COF'] = df['COF'].rolling(window=config.ROLLING_WINDOW_SIZE, min_periods=1, center=False).mean() # Visszaállítva a korábbi rolling mean-re
                 if len(all_data) == 0:
-                    plt.plot(df['Time'], df['COF'], label='Filtered signal (Median + EWM)', color='orange', linewidth=2.5)
+                    plt.plot(df['Time'], df['COF'], label='Filtered signal (Rolling Mean)', color='orange', linewidth=2.5) # Visszaállítva a korábbi label-re
                     plt.xlabel("Time [s]")
                     plt.ylabel("Coefficient of friction (COF) [-]")
                     plt.legend()
@@ -274,19 +267,6 @@ else:
                     if any(isinstance(x, (tuple, list)) for x in param_values):
                         idx = trial.suggest_categorical(param_name + "_idx", list(range(len(param_values))))
                         sampled_params[param_name] = param_values[idx]
-                    elif all(x is None or isinstance(x, str) for x in param_values) or any(x is None for x in param_values):
-                        sampled_params[param_name] = trial.suggest_categorical(param_name, param_values)
-                    elif all(isinstance(x, bool) for x in param_values):
-                        sampled_params[param_name] = trial.suggest_categorical(param_name, param_values)
-                    elif all(isinstance(x, int) for x in param_values):
-                        sampled_params[param_name] = trial.suggest_int(param_name, min(param_values), max(param_values))
-                    elif all(isinstance(x, (int, float)) for x in param_values):
-                        low, high = min(param_values), max(param_values)
-                        if low == high:
-                            sampled_params[param_name] = trial.suggest_categorical(param_name, param_values)
-                        else:
-                            is_log = ("learning_rate" in param_name or "alpha" in param_name) and low > 0
-                            sampled_params[param_name] = trial.suggest_float(param_name, low, float(high), log=is_log)
                     else:
                         sampled_params[param_name] = trial.suggest_categorical(param_name, param_values)
 
