@@ -44,7 +44,7 @@ SPARSITY_WEIGHT = 0.3
 
 # --- AKADÉMIAI ÁBRAFORMÁZÁS BEÁLLÍTÁSA ---
 def set_academic_plot_style():
-    plt.style.use('default')
+    # plt.style.use('default') # Visszaállítva a korábbi állapotra
     plt.rcParams.update({
         'font.family': 'sans-serif',
         'font.sans-serif': ['Tahoma'],
@@ -52,14 +52,8 @@ def set_academic_plot_style():
         'axes.labelsize': 12,
         'xtick.labelsize': 11,
         'ytick.labelsize': 11,
-        'legend.fontsize': 11,
-        'figure.figsize': (6.3, 3.15),
-        'axes.facecolor': 'white',
-        'figure.facecolor': 'white',
-        'text.color': 'black',
-        'axes.labelcolor': 'black',
-        'xtick.color': 'black',
-        'ytick.color': 'black'
+        'legend.fontsize': 11, # Visszaállítva a korábbi állapotra
+        'figure.figsize': (6.3, 3.15) # Visszaállítva a korábbi állapotra
     })
 
 # --- MODELL TANÍTÁSI PARAMÉTEREK ---
@@ -135,7 +129,7 @@ models_config = {
             "regressor__xgb__estimator__learning_rate": [0.05, 0.1, 0.2],
             "regressor__xgb__estimator__max_depth": [4, 6, 8],
             "regressor__xgb__estimator__reg_alpha": [0, 0.1, 1],
-            "regressor__xgb__estimator__reg_lambda": [10, 50, 100]
+            "regressor__xgb__estimator__reg_lambda": [1, 5, 10]
         }
     },
     "Neural Network (MLP)": {
@@ -215,17 +209,13 @@ models_config = {
         }
     },
     "Polynomial Ridge Regression": {
-        "model": TransformedTargetRegressor(
-            regressor=Pipeline([
-                ('scaler', PandasStandardScaler()),
-                ('poly', PolynomialFeatures(degree=2, include_bias=False)),
-                ('ridge', Ridge())
-            ]),
-            func=np.log,
-            inverse_func=np.exp
-        ),
+        "model": Pipeline([
+            ('scaler', PandasStandardScaler()),
+            ('poly', PolynomialFeatures(degree=2, include_bias=False)),
+            ('ridge', Ridge())
+        ]),
         "params": {
-            "regressor__ridge__alpha": [0.001, 0.01, 0.1, 1.0]
+            "ridge__alpha": [0.001, 0.01, 0.1, 1.0]
         }
     }
 }
