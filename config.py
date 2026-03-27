@@ -9,7 +9,6 @@ from sklearn.multioutput import MultiOutputRegressor
 from lightgbm import LGBMRegressor
 from catboost import CatBoostRegressor
 from sklearn.neighbors import KNeighborsRegressor
-from sklearn.preprocessing import PolynomialFeatures
 from sklearn.compose import TransformedTargetRegressor
 from sklearn.pipeline import Pipeline
 from transformers import PandasStandardScaler
@@ -44,16 +43,21 @@ SPARSITY_WEIGHT = 0.3
 
 # --- AKADÉMIAI ÁBRAFORMÁZÁS BEÁLLÍTÁSA ---
 def set_academic_plot_style():
-    # plt.style.use('default') # Visszaállítva a korábbi állapotra
     plt.rcParams.update({
         'font.family': 'sans-serif',
         'font.sans-serif': ['Tahoma'],
         'font.size': 11,
         'axes.labelsize': 12,
+        'axes.labelcolor': 'black',
         'xtick.labelsize': 11,
+        'xtick.color': 'black',
         'ytick.labelsize': 11,
-        'legend.fontsize': 11, # Visszaállítva a korábbi állapotra
-        'figure.figsize': (6.3, 3.15) # Visszaállítva a korábbi állapotra
+        'ytick.color': 'black',
+        'legend.fontsize': 11,
+        'figure.figsize': (6.3, 3.15),
+        'axes.facecolor': 'white',
+        'figure.facecolor': 'white',
+        'grid.color': 'lightgrey'
     })
 
 # --- MODELL TANÍTÁSI PARAMÉTEREK ---
@@ -78,6 +82,8 @@ NAME_MAPPING = {
     'Load_div_Temperature': 'Load / Temperature',
     'Concentration_div_Load': 'Concentration / Load',
     'Temperature_div_Concentration': 'Temperature / Concentration',
+    'Load': 'Load [N]',
+    'Temperature': 'Temperature [°C]',
     'COF': 'Coefficient of Friction (COF) [-]',
     'Friction absolute integral': 'Friction Absolute Integral (FAI) [-]',
     'Sample_Weight': 'Sample weight',
@@ -93,9 +99,10 @@ NAME_MAPPING = {
 
 # --- HTML RIPORT LEÍRÁSOK ---
 IMAGE_DESCRIPTIONS = {
-    "Effect_of_noise_filtering.png": "Comparison of raw measurement data and the smoothed curve using rolling mean.",
+    "Effect_of_noise_filtering.png": "Comparison of raw measurement data and the smoothed curve using a rolling mean filter on the first data file.",
+    "Effect_of_noise_filtering_2.png": "Comparison of raw measurement data and the smoothed curve using a rolling mean filter on a different data file for verification.",
     "3D_distribution_of_input_data.png": "Distribution of measurement points in the Load, Temperature, and Concentration space.",
-    "DoE_3D_map.png": "3D Map of Existing Data and DoE Suggestions.",
+    "DoE_2D_Projections.png": "2D Projections of Existing Data and DoE Suggestions, showing where new measurements are proposed.",
     "COF_heatmap.png": "Estimated static friction coefficient (COF) as a function of Load and Temperature.",
     "Correlation_matrix.png": "Strength of linear relationships between variables (Pearson correlation).",
     "Model_comparison.png": "Comparison of model accuracy (R2) and error (RMSE) on the test dataset.",
@@ -208,14 +215,13 @@ models_config = {
             "regressor__knn__weights": ['uniform']
         }
     },
-    "Polynomial Ridge Regression": {
+    "Ridge Regression": {
         "model": Pipeline([
             ('scaler', PandasStandardScaler()),
-            ('poly', PolynomialFeatures(degree=2, include_bias=False)),
             ('ridge', Ridge())
         ]),
         "params": {
-            "ridge__alpha": [0.001, 0.01, 0.1, 1.0]
+            "ridge__alpha": [0.1, 1.0, 10.0, 100.0]
         }
     }
 }
