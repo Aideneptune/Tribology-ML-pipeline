@@ -1,6 +1,7 @@
 import os
 import numpy as np
 import matplotlib.pyplot as plt
+from cycler import cycler
 from sklearn.ensemble import RandomForestRegressor
 from xgboost import XGBRegressor
 from sklearn.linear_model import Ridge
@@ -38,8 +39,8 @@ PLOT_SETTINGS = {
 }
 
 # --- DOE BEÁLLÍTÁSOK ---
-UNCERTAINTY_WEIGHT = 0.7
-SPARSITY_WEIGHT = 0.3
+UNCERTAINTY_WEIGHT = 0.5
+SPARSITY_WEIGHT = 0.5
 
 # --- AKADÉMIAI ÁBRAFORMÁZÁS BEÁLLÍTÁSA ---
 def set_academic_plot_style():
@@ -57,7 +58,28 @@ def set_academic_plot_style():
         'figure.figsize': (6.3, 3.15),
         'axes.facecolor': 'white',
         'figure.facecolor': 'white',
-        'grid.color': 'lightgrey'
+        'axes.edgecolor': 'black',
+        'axes.grid': False,
+        'grid.color': 'black',
+        'xtick.direction': 'in',
+        'ytick.direction': 'in',
+        'xtick.top': True,
+        'ytick.right': True,
+        'xtick.minor.visible': True,
+        'ytick.minor.visible': True,
+        'xtick.major.size': 3.0,
+        'ytick.major.size': 3.0,
+        'xtick.minor.size': 1.5,
+        'ytick.minor.size': 1.5,
+        'xtick.major.width': 0.5,
+        'ytick.major.width': 0.5,
+        'xtick.minor.width': 0.5,
+        'ytick.minor.width': 0.5,
+        'axes.linewidth': 0.5,
+        'grid.linewidth': 0.5,
+        'lines.linewidth': 2.5,
+        'legend.frameon': False,
+        'axes.prop_cycle': cycler('color', ['k', 'r', 'b', 'g']) + cycler('ls', ['-', '--', ':', '-.'])
     })
 
 # --- MODELL TANÍTÁSI PARAMÉTEREK ---
@@ -134,9 +156,9 @@ models_config = {
         "params": {
             "regressor__xgb__estimator__n_estimators": [50, 100, 150],
             "regressor__xgb__estimator__learning_rate": [0.05, 0.1, 0.2],
-            "regressor__xgb__estimator__max_depth": [4, 6, 8],
-            "regressor__xgb__estimator__reg_alpha": [0, 0.1, 1],
-            "regressor__xgb__estimator__reg_lambda": [1, 5, 10]
+            "regressor__xgb__estimator__max_depth": [2, 3, 4],
+            "regressor__xgb__estimator__reg_alpha": [1, 5, 10],
+            "regressor__xgb__estimator__reg_lambda": [5, 10, 20]
         }
     },
     "Neural Network (MLP)": {
@@ -149,8 +171,8 @@ models_config = {
             inverse_func=np.exp
         ),
         "params": {
-            "regressor__mlp__hidden_layer_sizes": [(100, 50, 25), (64, 64, 64)],
-            "regressor__mlp__alpha": [1.0, 5.0, 10.0],
+            "regressor__mlp__hidden_layer_sizes": [(50,), (50, 25)],
+            "regressor__mlp__alpha": [5.0, 10.0, 20.0],
             "regressor__mlp__activation": ['relu', 'tanh'],
             "regressor__mlp__learning_rate_init": [0.001, 0.01]
         }
@@ -158,7 +180,7 @@ models_config = {
     "Random Forest": {
         "model": TransformedTargetRegressor(
             regressor=Pipeline([
-                ('scaler', PandasStandardScaler()),              # Skálázás Pandas kimenettel
+                ('scaler', PandasStandardScaler()),
                 ('rf', RandomForestRegressor(random_state=RANDOM_SEED, n_jobs=-1))
             ]),
             func=np.log,
@@ -166,8 +188,8 @@ models_config = {
         ),
         "params": {
             "regressor__rf__n_estimators": [100, 200, 300],
-            "regressor__rf__max_depth": [None, 10, 20],
-            "regressor__rf__min_samples_leaf": [5, 10, 20]
+            "regressor__rf__max_depth": [5, 10, 15],
+            "regressor__rf__min_samples_leaf": [10, 20, 50]
         }
     },
     "LightGBM": {
@@ -182,7 +204,8 @@ models_config = {
         "params": {
             "regressor__lgbm__estimator__n_estimators": [50, 100, 200],
             "regressor__lgbm__estimator__learning_rate": [0.05, 0.1, 0.2],
-            "regressor__lgbm__estimator__max_depth": [3, 4, 5]
+            "regressor__lgbm__estimator__max_depth": [2, 3, 4],
+            "regressor__lgbm__estimator__reg_lambda": [5, 10, 20]
         }
     },
     "CatBoost": {
@@ -197,8 +220,8 @@ models_config = {
         "params": {
             "regressor__cat__estimator__iterations": [100, 200, 500],
             "regressor__cat__estimator__learning_rate": [0.05, 0.1, 0.2],
-            "regressor__cat__estimator__depth": [4, 6, 8],
-            "regressor__cat__estimator__l2_leaf_reg": [3, 5, 10]
+            "regressor__cat__estimator__depth": [2, 3, 4],
+            "regressor__cat__estimator__l2_leaf_reg": [10, 20, 50]
         }
     },
     "KNN Regressor": {
@@ -211,7 +234,7 @@ models_config = {
             inverse_func=np.exp
         ),
         "params": {
-            "regressor__knn__n_neighbors": [5, 10, 20],
+            "regressor__knn__n_neighbors": [10, 20, 50],
             "regressor__knn__weights": ['uniform']
         }
     },
@@ -221,7 +244,7 @@ models_config = {
             ('ridge', Ridge())
         ]),
         "params": {
-            "ridge__alpha": [0.1, 1.0, 10.0, 100.0]
+            "ridge__alpha": [10.0, 100.0, 500.0]
         }
     }
 }
