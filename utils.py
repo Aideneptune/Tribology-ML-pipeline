@@ -124,7 +124,7 @@ def plot_learning_curve(estimator, X, y, cv=None, n_jobs=-1, train_sizes=np.lins
     plt.savefig(os.path.join(results_dir, "Learning_Curve.svg"), format='svg', bbox_inches='tight', pad_inches=0.1)
     plt.close()
 
-def generate_html_report(results, xlsx_files, full_df, desc_df, html_path, results_dir, doe_suggestions, optimum_results, shap_text="", timing_stats=None, dynamic_descriptions=None):
+def generate_html_report(results, xlsx_files, full_df, desc_df, html_path, results_dir, doe_suggestions, optimum_results, shap_text="", timing_stats=None, dynamic_descriptions=None, distribution_summary=None):
     """HTML jelentés generálása a megadott PDF struktúra alapján."""
     sorted_results = sorted(results, key=lambda x: x['R2_Test'], reverse=True)
     best_model_res = sorted_results[0]
@@ -200,7 +200,17 @@ def generate_html_report(results, xlsx_files, full_df, desc_df, html_path, resul
         <div style="overflow-x:auto;">
             {desc_df.to_html(classes='table', border=0, float_format=lambda x: '%.3f' % x)}
         </div>
+"""
 
+    if distribution_summary is not None:
+        dist_html = distribution_summary.to_html(classes='table', border=0, index=False)
+        html_content += f"""
+        <h3>File Distribution by Operating Conditions</h3>
+        <div style="overflow-x:auto; max-height: 400px; margin-bottom: 30px;">
+            {dist_html}
+        </div>"""
+
+    html_content += """
         <h2 id="sec3">3. Model results comparison</h2>
         <div style="overflow-x:auto;">
             <table>
@@ -218,7 +228,8 @@ def generate_html_report(results, xlsx_files, full_df, desc_df, html_path, resul
                         <th>Tuning & Training Time/Prediction Time</th>
                     </tr>
                 </thead>
-                <tbody>"""
+                <tbody>
+    """
                 
     for res in sorted_results:
         opt_str = f"{res['Opt_Conc']:.2f}/{int(res['Opt_Load'])}/{int(res['Opt_Temp'])}"
