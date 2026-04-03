@@ -83,7 +83,6 @@ class VIFSelector(BaseEstimator, TransformerMixin):
         self.sample_size = sample_size
         self.protected_cols = protected_cols if protected_cols else [
             'Load', 'Temperature', 'Concentration', 'Esterified', 'Time', 'Log_Time', 'Time_Squared',
-            'Load_div_Temperature', 'Concentration_div_Load', 'Temperature_div_Concentration'
         ]
         self.selected_features_ = []
         self.feature_names_in_ = None
