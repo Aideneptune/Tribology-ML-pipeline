@@ -4,6 +4,7 @@ import time
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
 from sklearn.model_selection import learning_curve
 import config
 
@@ -37,7 +38,7 @@ def filter_outliers_grouped(df, group_col, cols, low_q=0.01, high_q=0.99):
         mask &= (df[col] >= lowers) & (df[col] <= highers)
     return df[mask]
 
-def plot_pareto_front(results_dir, predictions, temperatures, title="Pareto front"):
+def plot_pareto_front(results_dir, predictions, color_values, color_label="Temperature [°C]", title="Pareto front", filename="Pareto_Optimization.png", discrete=False):
     """Pareto front vizualizáció és térdkapu pont keresés."""
     cof = predictions[:, 0]
     fai = predictions[:, 1]
@@ -83,8 +84,21 @@ def plot_pareto_front(results_dir, predictions, temperatures, title="Pareto fron
         knee_cof, knee_fai = pareto_cof[0], pareto_fai[0]
 
     plt.figure(figsize=(6.3, 3.15))
-    plt.scatter(cof, fai, alpha=0.6, c=temperatures, cmap='plasma', label='Feasible operating points', s=10)
-    plt.colorbar(label='Temperature [°C]')
+    if discrete:
+        unique_vals = np.sort(np.unique(color_values))
+        n_bins = len(unique_vals)
+        cmap = plt.get_cmap('plasma', n_bins)
+        if n_bins > 1:
+            step = (unique_vals[-1] - unique_vals[0]) / (n_bins - 1)
+            boundaries = np.linspace(unique_vals[0] - step / 2, unique_vals[-1] + step / 2, n_bins + 1)
+        else:
+            boundaries = [unique_vals[0] - 0.5, unique_vals[0] + 0.5]
+        norm = mcolors.BoundaryNorm(boundaries, cmap.N)
+        sc = plt.scatter(cof, fai, alpha=0.6, c=color_values, cmap=cmap, norm=norm, label='Feasible operating points', s=10)
+        plt.colorbar(sc, label=color_label, ticks=unique_vals)
+    else:
+        sc = plt.scatter(cof, fai, alpha=0.6, c=color_values, cmap='plasma', label='Feasible operating points', s=10)
+        plt.colorbar(sc, label=color_label)
     plt.plot(pareto_cof, pareto_fai, color='purple', marker='o', label='Pareto front (Trade-off optimums)')
     plt.plot(knee_cof, knee_fai, color='orange', marker='o', markersize=10, label='Knee point (Best trade-off)', markeredgecolor='black')
     plt.annotate(f"Knee\n({knee_cof:.3f}, {knee_fai:.3f})", (knee_cof, knee_fai), 
@@ -96,11 +110,11 @@ def plot_pareto_front(results_dir, predictions, temperatures, title="Pareto fron
     ymin, ymax = plt.gca().get_ylim()
     plt.ylim(ymin, ymax + (ymax - ymin) * 0.35)
     plt.legend(loc='upper right')
-    plt.savefig(os.path.join(results_dir, "Pareto_Optimization.png"), dpi=config.PLOT_SETTINGS['dpi'], bbox_inches='tight', pad_inches=0.1)
-    plt.savefig(os.path.join(results_dir, "Pareto_Optimization.svg"), format='svg', bbox_inches='tight', pad_inches=0.1)
+    plt.savefig(os.path.join(results_dir, filename), dpi=config.PLOT_SETTINGS['dpi'], bbox_inches='tight', pad_inches=0.1)
+    plt.savefig(os.path.join(results_dir, filename.replace('.png', '.svg')), format='svg', bbox_inches='tight', pad_inches=0.1)
     plt.close()
 
-def plot_learning_curve(estimator, X, y, cv=None, n_jobs=-1, train_sizes=np.linspace(0.2, 1.0, 10), results_dir=".", groups=None, num_files=1):
+def plot_learning_curve(estimator, X, y, cv=None, n_jobs=-1, train_sizes=np.linspace(0.2, 1.0, 10), results_dir=".", groups=None, num_files=1, filename="Learning_Curve.png"):
     """Tanulási görbe generálása és mentése."""
     plt.figure(figsize=(6.3, 3.15))
     plt.xlabel("Number of training files/experiments")
@@ -126,11 +140,11 @@ def plot_learning_curve(estimator, X, y, cv=None, n_jobs=-1, train_sizes=np.lins
     plt.plot(train_sizes_files, test_scores_mean, 'o-', color="orange", label="Cross-validation score")
     plt.ylim(max(0.0, np.min(test_scores_mean) - 0.1), 1.25) # Extrában megemelve
     plt.legend(loc="upper right")
-    plt.savefig(os.path.join(results_dir, "Learning_Curve.png"), dpi=config.PLOT_SETTINGS['dpi'], bbox_inches='tight', pad_inches=0.1)
-    plt.savefig(os.path.join(results_dir, "Learning_Curve.svg"), format='svg', bbox_inches='tight', pad_inches=0.1)
+    plt.savefig(os.path.join(results_dir, filename), dpi=config.PLOT_SETTINGS['dpi'], bbox_inches='tight', pad_inches=0.1)
+    plt.savefig(os.path.join(results_dir, filename.replace('.png', '.svg')), format='svg', bbox_inches='tight', pad_inches=0.1)
     plt.close()
 
-def generate_html_report(results, xlsx_files, full_df, desc_df, html_path, results_dir, doe_suggestions, optimum_results, shap_text="", timing_stats=None, dynamic_descriptions=None, distribution_summary=None, plotly_3d_html=None):
+def generate_html_report(results, xlsx_files, full_df, desc_df, filtered_desc_df, html_path, results_dir, doe_suggestions, optimum_results, shap_text="", timing_stats=None, dynamic_descriptions=None, distribution_summary=None, plotly_3d_html=None):
     """HTML jelentés generálása a megadott PDF struktúra alapján."""
     sorted_results = sorted(results, key=lambda x: x['R2_Test'], reverse=True)
     best_model_res = sorted_results[0]
@@ -232,8 +246,13 @@ def generate_html_report(results, xlsx_files, full_df, desc_df, html_path, resul
         </div>
 
         <h2 id="sec2">2. Dataset descriptive statistics</h2>
+        <h3>Before Outlier Removal</h3>
         <div style="overflow-x:auto;">
             {desc_df.to_html(classes='table', border=0, float_format=lambda x: '%.3f' % x)}
+        </div>
+        <h3>After Outlier Removal (|Error| &lt;= 0.05)</h3>
+        <div style="overflow-x:auto;">
+            {filtered_desc_df.to_html(classes='table', border=0, float_format=lambda x: '%.3f' % x)}
         </div>
 """
 
