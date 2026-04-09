@@ -18,6 +18,7 @@ from tqdm import tqdm
 from sklearn.ensemble import RandomForestRegressor, BaggingRegressor
 import optuna
 from sklearn.ensemble import VotingRegressor
+from sklearn.inspection import PartialDependenceDisplay
 from sklearn.linear_model import LinearRegression, Ridge
 from sklearn.neighbors import NearestNeighbors
 from sklearn.model_selection import StratifiedShuffleSplit, RandomizedSearchCV, cross_validate, GroupKFold, ShuffleSplit, GroupShuffleSplit
@@ -100,7 +101,7 @@ else:
                 
                 if len(all_data) == 0:
                     plt.figure(figsize=(6.3, 3.15))
-                    plt.plot(df['Time'], df_raw_cof, label='Eredeti jel', color='silver', alpha=0.7)
+                    plt.plot(df['Time'], df_raw_cof, label='Original signal', color='silver', alpha=0.7)
                     
                 df['COF'] = df['COF'].rolling(window=config.ROLLING_WINDOW_SIZE).mean()
                 df = df.dropna(subset=['COF'])
@@ -118,8 +119,8 @@ else:
                     
                 if len(all_data) == 49:
                     plt.figure(figsize=(6.3, 3.15))
-                    plt.plot(df['Time'], df_raw_cof.loc[df.index], label='Eredeti jel (50. fájl)', color='silver', alpha=0.7)
-                    plt.plot(df['Time'], df['COF'], label='Filtered signal (Rolling Mean)', color='blue')
+                    plt.plot(df['Time'], df_raw_cof.loc[df.index], label='Original signal', color='silver', alpha=0.7)
+                    plt.plot(df['Time'], df['COF'], label='Filtered signal with Rolling Mean)', color='purple')
                     plt.xlabel("Time [s]")
                     plt.ylabel("Coefficient of friction (COF) [-]")
                     ymin, ymax = plt.gca().get_ylim()
@@ -138,6 +139,15 @@ else:
     full_df = pd.concat(all_data, ignore_index=True)
     full_df = full_df[full_df['Time'] > 0]
     full_df = full_df[(full_df['COF'] > 0) & (full_df['Friction absolute integral'] > 0)]
+
+    high_cof_mask = full_df['COF'] > 0.325
+    if high_cof_mask.any():
+        high_cof_counts = full_df[high_cof_mask].groupby('File_ID').size()
+        print(f"\nFigyelem: Extrém magas COF (> 0.325) értékek miatti szűrés. Összesen {high_cof_mask.sum()} sor érintett.")
+        for fid, count in high_cof_counts.items():
+            print(f"  - {fid}: {count} sor")
+        full_df = full_df[~high_cof_mask]
+
     full_df = create_features(full_df)
 
     full_df = filter_outliers_grouped(full_df, 'File_ID', ['COF', 'Friction absolute integral'], low_q=0.05, high_q=0.95)
@@ -150,6 +160,8 @@ else:
     counts = full_df.groupby(weight_cols)['Time'].transform('count')
     full_df['Sample_Weight'] = 1.0 / counts
     full_df['Sample_Weight'] = np.sqrt(full_df['Sample_Weight'])
+
+    full_df.loc[full_df['COF'] > 0.25, 'Sample_Weight'] *= 2.5
     full_df['Sample_Weight'] = full_df['Sample_Weight'] * (len(full_df) / full_df['Sample_Weight'].sum())
 
     if config.USE_CACHE:
@@ -159,6 +171,49 @@ else:
 
 loading_duration = time.time() - start_loading
 print(f"Data loading/caching completed in {format_time(loading_duration)}")
+
+# --- COF > 0.26 ellenőrzése (már a betöltött/cache-elt adatokon is lefut) ---
+high_cof_026_mask = full_df['COF'] > 0.26
+if high_cof_026_mask.any():
+    high_cof_026_counts = full_df[high_cof_026_mask].groupby('File_ID').size()
+    print(f"\nInfo: COF > 0.26 értékek száma a szűrt adathalmazban: {high_cof_026_mask.sum()} db.")
+    print("Ezek az alábbi mérésekhez (fájlokhoz) tartoznak:")
+    for fid, count in high_cof_026_counts.items():
+        print(f"  - {fid}: {count} adatpont")
+else:
+    print("\nInfo: Nincs 0.26 feletti COF érték az adathalmazban.")
+
+import matplotlib.gridspec as gridspec
+
+print("\n--- Bemeneti és Célváltozó eloszlás diagram generálása... ---")
+fig = plt.figure(figsize=(10, 8))
+gs = gridspec.GridSpec(3, 4, width_ratios=[1, 1, 1, 0.8], wspace=0.4, hspace=0.4)
+
+features_to_plot = ['Load', 'Temperature', 'Concentration', 'Time', 'Esterified', 'Hertz_Stress_MPa']
+
+for i, feature in enumerate(features_to_plot): 
+    row = i // 3
+    col = i % 3
+    ax = plt.subplot(gs[row, col])
+    ax.hist(full_df[feature].dropna(), bins=15, color='#003f5c', edgecolor='black', alpha=0.8)
+    ax.set_xlabel(config.NAME_MAPPING.get(feature, feature), fontsize=9)
+    if col == 0:
+        ax.set_ylabel('Count', fontsize=9)
+    ax.tick_params(axis='both', which='major', labelsize=8)
+
+ax_target = plt.subplot(gs[:, 3])
+ax_target.boxplot(full_df['COF'].dropna(), vert=True, patch_artist=True, 
+                  boxprops=dict(facecolor='#bc5090', color='black'),
+                  medianprops=dict(color='black', linewidth=1.5))
+ax_target.set_xlabel(config.NAME_MAPPING.get('COF', 'COF'), fontsize=10)
+ax_target.set_xticks([]) 
+ax_target.tick_params(axis='y', labelsize=9)
+
+plt.suptitle("Model Input Variables vs Target Variable", fontsize=14, y=0.95)
+plt.savefig(os.path.join(config.RESULTS_DIR, "Input_Target_Distributions.png"), dpi=config.PLOT_SETTINGS['dpi'], bbox_inches='tight', pad_inches=0.1)
+plt.close()
+
+dynamic_descriptions["Input_Target_Distributions.png"] = "Distribution of the main input variables (histograms) and the target COF variable (boxplot)."
 
 # --- Adateloszlási mátrix ---
 file_group = full_df.groupby('File_ID').agg({
@@ -340,7 +395,8 @@ if not models_loaded:
             optuna.logging.set_verbosity(optuna.logging.WARNING)
             def logging_callback(study, frozen_trial):
                 print(f"  Trial {frozen_trial.number} finished with R2 CV: {frozen_trial.value:.4f} | Best so far: {study.best_value:.4f} (Trial {study.best_trial.number})")
-            study.optimize(objective, n_trials=50, callbacks=[logging_callback])
+            n_trials = cfg.get("n_trials", config.SEARCH_ITERATIONS)
+            study.optimize(objective, n_trials=n_trials, callbacks=[logging_callback])
 
             try:
                 import optuna.visualization.matplotlib as ovm
@@ -422,10 +478,11 @@ if not models_loaded:
         avg_r2 = np.mean(cv_scores['test_r2'])
         
         feature_imp = None
-        if "Random Forest" in name: feature_imp = best_estimator.regressor_.named_steps['rf'].feature_importances_
-        elif "XGBoost" in name: feature_imp = np.mean([est.feature_importances_ for est in best_estimator.regressor_.named_steps['xgb'].estimators_], axis=0)
-        elif "LightGBM" in name: feature_imp = np.mean([est.feature_importances_ for est in best_estimator.regressor_.named_steps['lgbm'].estimators_], axis=0)
-        elif "CatBoost" in name: feature_imp = np.mean([est.feature_importances_ for est in best_estimator.regressor_.named_steps['cat'].estimators_], axis=0)
+        pipeline = best_estimator.regressor_ if hasattr(best_estimator, 'regressor_') else best_estimator
+        if "Random Forest" in name: feature_imp = pipeline.named_steps['rf'].feature_importances_
+        elif "XGBoost" in name: feature_imp = np.mean([est.feature_importances_ for est in pipeline.named_steps['xgb'].estimators_], axis=0)
+        elif "LightGBM" in name: feature_imp = np.mean([est.feature_importances_ for est in pipeline.named_steps['lgbm'].estimators_], axis=0)
+        elif "CatBoost" in name: feature_imp = np.mean([est.feature_importances_ for est in pipeline.named_steps['cat'].estimators_], axis=0)
 
         selected_features_model = global_vif.selected_features_
         
@@ -630,20 +687,85 @@ if not models_loaded:
         }, models_cache_path)
 
 print(f"\nBest model found: {best_model_name} with average R2 CV: {best_r2_overall:.4f}")
-print(f"Retraining {best_model_name} on the full dataset...")
+
+print("\n--- Kiemelkedő hibaértékek kiszűrése a végső betanítás előtt... ---")
+full_preds = np.maximum(best_model_overall.predict(X), config.PREDICTION_LOWER_BOUND)
+full_residuals = full_preds[:, 0] - Y['COF'].values
+valid_mask = np.abs(full_residuals) <= 0.05
+
+# Védőháló: Ellenőrizzük, hogy van-e olyan fájl, aminek az összes sora kiesne
+df_mask = pd.DataFrame({
+    'File_ID': full_df['File_ID'].values, 
+    'Valid': valid_mask, 
+    'AbsError': np.abs(full_residuals)
+})
+dropped_files = df_mask.groupby('File_ID')['Valid'].sum()
+completely_dropped = dropped_files[dropped_files == 0].index
+
+if len(completely_dropped) > 0:
+    print(f"\nFigyelem! {len(completely_dropped)} fájl teljesen kiesne. Visszamentjük a legkisebb hibájú pontjukat:")
+    for fid in completely_dropped:
+        min_err_idx = df_mask[df_mask['File_ID'] == fid]['AbsError'].idxmin()
+        valid_mask[min_err_idx] = True
+        print(f"  - {fid} (Megmentett pont hibája: {df_mask.loc[min_err_idx, 'AbsError']:.4f})")
+
+dropped_count = np.sum(~valid_mask)
+print(f"Eltávolított anomáliák száma (|Error| > 0.05): {dropped_count} db adatpont a {len(X)} -ból.")
+
+# --- Új diagram: Kiszűrt pontok (Anomáliák) vizualizációja ---
+if dropped_count > 0:
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.scatter(full_df['Time'].values[valid_mask], full_residuals[valid_mask], color='blue', alpha=0.2, s=10, label='Points retained')
+    ax.scatter(full_df['Time'].values[~valid_mask], full_residuals[~valid_mask], color='red', alpha=0.8, s=15, label='Excluded points (|Error| > 0.05)')
+    ax.axhline(0.05, color='black', linestyle='--', linewidth=1.5)
+    ax.axhline(-0.05, color='black', linestyle='--', linewidth=1.5)
+    ax.axhline(0, color='grey', linestyle='-', linewidth=1)
+    ax.set_xlabel("Time [s]")
+    ax.set_ylabel("Residual error")
+    ax.legend(loc='upper right')
+    dynamic_descriptions["Dropped_Anomalies.png"] = "Scatter plot showing all data points. Red points indicate anomalies (|Error| > 0.05) that were dropped before final model retraining."
+    plt.savefig(os.path.join(config.RESULTS_DIR, "Dropped_Anomalies.png"), dpi=config.PLOT_SETTINGS['dpi'], bbox_inches='tight', pad_inches=0.1)
+    plt.close()
+
+X_filtered = X[valid_mask]
+Y_filtered = Y[valid_mask]
+weights_filtered = full_df['Sample_Weight'].values[valid_mask]
+
+print(f"Retraining {best_model_name} on the filtered full dataset...")
 
 fit_params_full = {}
-if "Ensemble" in best_model_name: fit_params_full['sample_weight'] = full_df['Sample_Weight'].values
-elif "Random Forest" in best_model_name: fit_params_full['rf__sample_weight'] = full_df['Sample_Weight'].values
-elif "XGBoost" in best_model_name: fit_params_full['xgb__sample_weight'] = full_df['Sample_Weight'].values
-elif "LightGBM" in best_model_name: fit_params_full['lgbm__sample_weight'] = full_df['Sample_Weight'].values
-elif "CatBoost" in best_model_name: fit_params_full['cat__sample_weight'] = full_df['Sample_Weight'].values
-elif "Polynomial" in best_model_name: fit_params_full['ridge__sample_weight'] = full_df['Sample_Weight'].values
-best_model_overall.fit(X, Y, **fit_params_full)
+if "Ensemble" in best_model_name: fit_params_full['sample_weight'] = weights_filtered
+elif "Random Forest" in best_model_name: fit_params_full['rf__sample_weight'] = weights_filtered
+elif "XGBoost" in best_model_name: fit_params_full['xgb__sample_weight'] = weights_filtered
+elif "LightGBM" in best_model_name: fit_params_full['lgbm__sample_weight'] = weights_filtered
+elif "CatBoost" in best_model_name: fit_params_full['cat__sample_weight'] = weights_filtered
+elif "Polynomial" in best_model_name: fit_params_full['ridge__sample_weight'] = weights_filtered
+best_model_overall.fit(X_filtered, Y_filtered, **fit_params_full)
 
 optimum_results = {}
 
 print("\n--- Calculating Optimums over the Parameter Grid ---")
+
+# Pareto front ábrák (kombinált hálózat generálása)
+pareto_grid_list = []
+for ester_state in [0, 1]:
+    temp_grid = grid_df.copy()
+    temp_grid['Esterified'] = ester_state
+    pareto_grid_list.append(temp_grid)
+pareto_grid_df = pd.concat(pareto_grid_list, ignore_index=True)
+pareto_grid_df = create_features(pareto_grid_df)
+pareto_grid_trans = global_vif.transform(global_interact.transform(pareto_grid_df))
+pareto_preds = np.maximum(best_model_overall.predict(pareto_grid_trans), config.PREDICTION_LOWER_BOUND)
+
+pareto_configs = [
+    ('Temperature', 'Temperature [°C]', 'Pareto_Temperature.png', False),
+    ('Load', 'Load [N]', 'Pareto_Load.png', False),
+    ('Concentration', 'Concentration [wt%]', 'Pareto_Concentration.png', True),
+    ('Esterified', 'Esterified State (0/1)', 'Pareto_Esterified.png', True)
+]
+for col, label, fname, is_discrete in pareto_configs:
+    plot_pareto_front(config.RESULTS_DIR, pareto_preds, pareto_grid_df[col], color_label=label, title=f"Pareto front - Colored by {col}", filename=fname, discrete=is_discrete)
+    dynamic_descriptions[fname] = f"Pareto front over the full parameter grid, colored by {col}."
 
 for ester_state in [0, 1]:
     grid_df['Esterified'] = ester_state
@@ -660,9 +782,6 @@ for ester_state in [0, 1]:
     opt_load = grid_df.iloc[best_idx]['Load']
     opt_temp = grid_df.iloc[best_idx]['Temperature']
     
-    if ester_state == 1:
-        plot_pareto_front(config.RESULTS_DIR, preds, grid_df['Temperature'], title=f"Pareto front over the full parameter grid - Esterified (1)")
-
     check_df = pd.DataFrame({'Time': np.arange(6900, 7201, 10), 'Load': opt_load, 'Temperature': opt_temp, 'Concentration': opt_conc, 'Esterified': ester_state})
     check_df = create_features(check_df)[X_cols_raw]
     check_df_trans = global_vif.transform(global_interact.transform(check_df))
@@ -853,8 +972,13 @@ if tree_results:
     print(f"Generating SHAP analysis for the best tree-based model: {shap_model_name}...")
 
     try:
+        # Átmenetileg kikapcsoljuk a minor beosztásokat a SHAP MAXTICKS hiba elkerülésére
+        plt.rcParams['xtick.minor.visible'] = False
+        plt.rcParams['ytick.minor.visible'] = False
+
         start_shap = time.time()
-        scaler_step = shap_model.regressor_.named_steps['scaler']
+        pipeline = shap_model.regressor_ if hasattr(shap_model, 'regressor_') else shap_model
+        scaler_step = pipeline.named_steps['scaler']
         
         X_test_vif = X_test
         vif_feature_names = global_vif.get_feature_names_out()
@@ -877,9 +1001,9 @@ if tree_results:
 
         if model_step_name:
             if model_step_name == 'rf':
-                model_obj = shap_model.regressor_.named_steps[model_step_name]
+                model_obj = pipeline.named_steps[model_step_name]
             else:
-                model_obj = shap_model.regressor_.named_steps[model_step_name].estimators_[0]
+                model_obj = pipeline.named_steps[model_step_name].estimators_[0]
                 
             explainer = shap.TreeExplainer(model_obj)
             shap_values = explainer.shap_values(X_test_scaled)
@@ -898,6 +1022,51 @@ if tree_results:
             ax.grid(False)
             plt.savefig(os.path.join(config.RESULTS_DIR, "SHAP_feature_impact.png"), dpi=config.PLOT_SETTINGS['dpi'], bbox_inches='tight', pad_inches=0.1)
             plt.close()
+
+            # 1. SHAP Bar Plot (Globális fontosság)
+            plt.figure(figsize=(6.3, 3.15))
+            shap.summary_plot(shap_values_to_plot, X_test_display, plot_type="bar", show=False)
+            fig = plt.gcf()
+            fig.set_facecolor('white')
+            ax = plt.gca()
+            ax.set_facecolor('white')
+            plt.savefig(os.path.join(config.RESULTS_DIR, "SHAP_bar_plot.png"), dpi=config.PLOT_SETTINGS['dpi'], bbox_inches='tight', pad_inches=0.1)
+            plt.close()
+            dynamic_descriptions["SHAP_bar_plot.png"] = "Global feature importance based on mean absolute SHAP values."
+
+            # 2. SHAP Dependence Plot (Load vs Esterified)
+            plt.figure(figsize=(6.3, 3.15))
+            shap.dependence_plot("Load [N]", shap_values_to_plot, X_test_display, interaction_index="Esterified", show=False, ax=plt.gca())
+            fig = plt.gcf()
+            fig.set_facecolor('white')
+            plt.savefig(os.path.join(config.RESULTS_DIR, "SHAP_Dependence_Load.png"), dpi=config.PLOT_SETTINGS['dpi'], bbox_inches='tight', pad_inches=0.1)
+            plt.close()
+            
+            # 3. SHAP Dependence Plot (Temperature vs Esterified)
+            plt.figure(figsize=(6.3, 3.15))
+            shap.dependence_plot("Temperature [°C]", shap_values_to_plot, X_test_display, interaction_index="Esterified", show=False, ax=plt.gca())
+            fig = plt.gcf()
+            fig.set_facecolor('white')
+            plt.savefig(os.path.join(config.RESULTS_DIR, "SHAP_Dependence_Temperature.png"), dpi=config.PLOT_SETTINGS['dpi'], bbox_inches='tight', pad_inches=0.1)
+            plt.close()
+
+            # 4. SHAP Waterfall Plot (Első tesztpont lokális magyarázata)
+            plt.figure(figsize=(8, 5))
+            expected_val = explainer.expected_value
+            if isinstance(expected_val, (list, np.ndarray)):
+                expected_val = expected_val[0]
+            
+            exp = shap.Explanation(values=shap_values_to_plot[0], 
+                                   base_values=expected_val, 
+                                   data=X_test_display.iloc[0].values, 
+                                   feature_names=X_test_display.columns)
+            shap.plots.waterfall(exp, show=False)
+            fig = plt.gcf()
+            fig.set_facecolor('white')
+            plt.savefig(os.path.join(config.RESULTS_DIR, "SHAP_waterfall_plot.png"), dpi=config.PLOT_SETTINGS['dpi'], bbox_inches='tight', pad_inches=0.1)
+            plt.close()
+            dynamic_descriptions["SHAP_waterfall_plot.png"] = "SHAP Waterfall Plot explaining the specific prediction of the first test instance."
+
             config.set_academic_plot_style() # Visszaállítjuk a stílust a SHAP után
             
             mean_shap = np.abs(shap_values_to_plot).mean(axis=0)
@@ -910,18 +1079,126 @@ if tree_results:
 else:
     print("No tree-based models found for SHAP analysis.")
 
-print("\n--- Reziduális elemzés (Residual Plot) generálása... ---")
-y_test_pred = np.maximum(best_model_overall.predict(X_test), config.PREDICTION_LOWER_BOUND)
-residuals = y_test_pred[:, 0] - y_test['COF'].values
+valid_series = pd.Series(valid_mask, index=X.index)
+valid_test_mask = valid_series.loc[X_test.index]
+X_test_filtered = X_test[valid_test_mask]
+y_test_filtered = y_test[valid_test_mask]
+groups_test_filtered = groups.loc[X_test.index][valid_test_mask]
+
+print("\n--- Reziduális elemzés (Residual Plot) adatok kiszámítása... ---")
+y_test_pred = np.maximum(best_model_overall.predict(X_test_filtered), config.PREDICTION_LOWER_BOUND)
+residuals = y_test_pred[:, 0] - y_test_filtered['COF'].values
+
+print("\n--- Hibák eloszlása (Residual Histogram) generálása... ---")
 fig, ax = plt.subplots(figsize=(6.3, 3.15))
-plt.scatter(y_test['COF'].values, residuals, alpha=0.6, color='blue', edgecolors='k')
-plt.axhline(0, color='black', linestyle='--', linewidth=2)
-plt.xlabel("Actual COF")
-plt.ylabel("Residual Error")
-ax.yaxis.set_major_formatter(FuncFormatter(lambda y, _: f'{y:g}'))
-dynamic_descriptions["residuals_best_model.png"] = f"Residual Plot - {best_model_name} (COF)."
-plt.savefig(os.path.join(config.RESULTS_DIR, "residuals_best_model.png"), dpi=config.PLOT_SETTINGS['dpi'], bbox_inches='tight', pad_inches=0.1)
+plt.hist(residuals, bins=30, color='purple', edgecolor='black', alpha=0.7)
+plt.axvline(0, color='black', linestyle='--', linewidth=2)
+plt.xlabel("Residual Error (Predicted - Actual)")
+plt.ylabel("Frequency")
+dynamic_descriptions["Residual_Histogram.png"] = "Histogram of residual errors for the best model."
+plt.savefig(os.path.join(config.RESULTS_DIR, "Residual_Histogram.png"), dpi=config.PLOT_SETTINGS['dpi'], bbox_inches='tight', pad_inches=0.1)
 plt.close()
+
+print("\n--- Tényleges vs. Becsült értékek (Actual vs. Predicted) generálása... ---")
+fig, ax = plt.subplots(figsize=(6.3, 3.15))
+plt.scatter(y_test_filtered['COF'].values, y_test_pred[:, 0], alpha=0.6, color='orange', edgecolors='k')
+min_val = min(np.min(y_test_filtered['COF'].values), np.min(y_test_pred[:, 0]))
+max_val = max(np.max(y_test_filtered['COF'].values), np.max(y_test_pred[:, 0]))
+plt.plot([min_val, max_val], [min_val, max_val], color='black', linestyle='--', linewidth=2)
+plt.xlabel("Actual COF")
+plt.ylabel("Predicted COF")
+ax.yaxis.set_major_formatter(FuncFormatter(lambda y, _: f'{y:g}'))
+ax.xaxis.set_major_formatter(FuncFormatter(lambda x, _: f'{x:g}'))
+dynamic_descriptions["Actual_vs_Predicted.png"] = "Scatter plot of Actual vs. Predicted COF values."
+plt.savefig(os.path.join(config.RESULTS_DIR, "Actual_vs_Predicted.png"), dpi=config.PLOT_SETTINGS['dpi'], bbox_inches='tight', pad_inches=0.1)
+plt.close()
+
+print("\n--- RMSE vizsgálata normál és magas COF tartományokon (Teszt halmaz) ---")
+mask_high = y_test_filtered['COF'] > 0.26
+mask_normal = ~mask_high
+
+if mask_high.any():
+    rmse_high = np.sqrt(mean_squared_error(y_test_filtered.loc[mask_high, 'COF'], y_test_pred[mask_high, 0]))
+    print(f"RMSE (COF > 0.26)  : {rmse_high:.4f}  <- Ha a súlyozás működik, ennek csökkennie kell.")
+else:
+    print("Nincs COF > 0.26 a (szűrt) teszt halmazban.")
+
+if mask_normal.any():
+    rmse_normal = np.sqrt(mean_squared_error(y_test_filtered.loc[mask_normal, 'COF'], y_test_pred[mask_normal, 0]))
+    print(f"RMSE (COF <= 0.26) : {rmse_normal:.4f}  <- Ha ez jelentősen megnő, a modell túltanulta a kiugró pontokat.")
+
+print("\n--- Magas hibaértékek (|Error| > 0.05) forrásának azonosítása... ---")
+error_df = X_test_filtered.copy()
+error_df['Residual'] = residuals
+error_df['File_ID'] = groups_test_filtered.values
+error_df['Actual_COF'] = y_test_filtered['COF'].values
+
+high_error_df = error_df[error_df['Residual'].abs() > 0.05]
+if not high_error_df.empty:
+    print("\nFájlok a legtöbb |Error| > 0.05 hibával:")
+    error_stats = high_error_df.groupby('File_ID').agg(
+        Count=('Residual', 'count'),
+        Avg_Time=('Time', 'mean'),
+        Avg_Load=('Load', 'mean'),
+        Avg_Temp=('Temperature', 'mean')
+    ).sort_values(by='Count', ascending=False)
+    print(error_stats.to_string())
+else:
+    print("\nNincs 0.05-nél nagyobb abszolút hiba a teszthalmazon.")
+
+fig, ax = plt.subplots(figsize=(8, 5))
+unique_files = error_df['File_ID'].unique()
+cmap = plt.get_cmap('tab20')
+colors = cmap(np.linspace(0, 1, len(unique_files)))
+
+for i, file_id in enumerate(unique_files):
+    subset = error_df[error_df['File_ID'] == file_id]
+    ax.scatter(subset['Time'], subset['Residual'], label=file_id, color=colors[i], alpha=0.6, s=15)
+
+ax.axhline(0.05, color='red', linestyle='--', linewidth=1.5, label='Threshold (±0.05)')
+ax.axhline(-0.05, color='red', linestyle='--', linewidth=1.5)
+ax.axhline(0, color='black', linestyle='-', linewidth=1)
+ax.set_xlabel("Time [s]")
+ax.set_ylabel("Residual Error")
+ax.legend(loc='center left', bbox_to_anchor=(1.05, 0.5), fontsize='x-small', ncol=2 if len(unique_files)>15 else 1)
+dynamic_descriptions["Error_Analysis_Output.png"] = "Scatter plot showing residual errors over time, color-coded by File_ID, to identify the source of high errors."
+plt.savefig(os.path.join(config.RESULTS_DIR, "Error_Analysis_Output.png"), dpi=config.PLOT_SETTINGS['dpi'], bbox_inches='tight', pad_inches=0.1)
+plt.close()
+
+print("\n--- Részleges függőségi ábrák (PDP) generálása... ---")
+pdp_features = [f for f in ['Load', 'Temperature', 'Concentration'] if f in X_test_filtered.columns]
+if 'Load' in X_test_filtered.columns and 'Temperature' in X_test_filtered.columns:
+    pdp_features.append(('Load', 'Temperature'))
+
+if pdp_features:
+    try:
+        class SingleOutputWrapper(BaseEstimator):
+            _estimator_type = "regressor"
+            def __init__(self, model):
+                self.model = model
+            def fit(self, X, y=None):
+                pass
+            def predict(self, X):
+                return self.model.predict(X)[:, 0]
+        
+        wrapped_model = SingleOutputWrapper(best_model_overall)
+        
+        display = PartialDependenceDisplay.from_estimator(
+            wrapped_model, 
+            X_test_filtered, 
+            features=pdp_features, 
+            feature_names=X_test_filtered.columns,
+            grid_resolution=20
+        )
+        fig = display.figure_
+        fig.set_size_inches(12, 8)
+        fig.suptitle('Partial Dependence of COF on Key Features (1D and 2D)', y=1.02)
+        plt.tight_layout()
+        dynamic_descriptions["PDP_features.png"] = "Partial Dependence Plots showing the isolated effect of key features on the predicted COF."
+        plt.savefig(os.path.join(config.RESULTS_DIR, "PDP_features.png"), dpi=config.PLOT_SETTINGS['dpi'], bbox_inches='tight', pad_inches=0.1)
+        plt.close()
+    except Exception as e:
+        print(f"Failed to generate PDP plots: {e}")
 
 print("\n--- Generating Evaluation Plots ---")
 plt.figure(figsize=(6.3, 3.15))
@@ -1109,28 +1386,6 @@ dynamic_descriptions["Concentration_Trend_Analysis_Optimum.png"] = f"Concentrati
 plt.savefig(os.path.join(config.RESULTS_DIR, "Concentration_Trend_Analysis_Optimum.png"), dpi=config.PLOT_SETTINGS['dpi'], bbox_inches='tight', pad_inches=0.1)
 plt.close()
 
-fig = plt.figure(figsize=(10, 8))
-ax = fig.add_subplot(111, projection='3d')
-ax.xaxis.pane.fill = False
-ax.yaxis.pane.fill = False
-ax.zaxis.pane.fill = False
-ax.xaxis.pane.set_edgecolor('black')
-ax.yaxis.pane.set_edgecolor('black')
-ax.zaxis.pane.set_edgecolor('black')
-ax.xaxis.line.set_color('black')
-ax.yaxis.line.set_color('black')
-ax.zaxis.line.set_color('black')
-
-# Sima (smooth) világosszürke rácsozat kikényszerítése 3D-ben
-ax.grid(True)
-ax.xaxis._axinfo["grid"].update({"color": (0.8, 0.8, 0.8, 0.6), "linewidth": 1.0, "linestyle": "-"})
-ax.yaxis._axinfo["grid"].update({"color": (0.8, 0.8, 0.8, 0.6), "linewidth": 1.0, "linestyle": "-"})
-ax.zaxis._axinfo["grid"].update({"color": (0.8, 0.8, 0.8, 0.6), "linewidth": 1.0, "linestyle": "-"})
-
-ax.xaxis.set_major_locator(MaxNLocator(nbins=5))
-ax.yaxis.set_major_locator(MaxNLocator(nbins=5))
-ax.zaxis.set_major_locator(MaxNLocator(nbins=5))
-
 plot_df = full_df.groupby('File_ID').agg({'Load': 'mean', 'Temperature': 'mean', 'Concentration': 'mean', 'Esterified': 'first'}).reset_index()
 
 # Pozíció-zaj (jitter) hozzáadása, hogy az egybeeső mérések apró "felhőkké" váljanak és mind látszódjon
@@ -1141,18 +1396,6 @@ plot_df['Concentration_plot'] = np.clip(plot_df['Concentration'] + np.random.uni
 
 base_pts = plot_df[plot_df['Esterified'] == 0]
 ester_pts = plot_df[plot_df['Esterified'] == 1]
-
-ax.scatter(base_pts['Load_plot'], base_pts['Temperature_plot'], base_pts['Concentration_plot'], c='purple', marker='o', s=60, alpha=0.7, edgecolors='black', linewidth=0.5, label='Not esterified (0)')
-ax.scatter(ester_pts['Load_plot'], ester_pts['Temperature_plot'], ester_pts['Concentration_plot'], c='orange', marker='s', s=60, alpha=0.7, edgecolors='black', linewidth=0.5, label='Esterified (1)')
-
-ax.set_xlabel('Load [N]', labelpad=10)
-ax.set_ylabel('Temperature [°C]', labelpad=10)
-ax.set_zlabel('Concentration [wt%]', labelpad=10)
-ax.tick_params(axis='both', which='major', labelsize=9)
-
-ax.legend(loc='upper left', bbox_to_anchor=(1.05, 1))
-plt.savefig(os.path.join(config.RESULTS_DIR, "3D_distribution_of_input_data.png"), dpi=config.PLOT_SETTINGS['dpi'], bbox_inches='tight', pad_inches=0.1)
-plt.close()
 
 # --- Plotly Interactive 3D Plot ---
 print("\n--- Generating Interactive 3D Plot ---")
@@ -1225,64 +1468,36 @@ combined_plotly_html = plotly_3d_html + """
 <div class="no-print" style="margin-bottom: 30px; border: 1px solid #ccc; padding: 10px; background-color: #fafafa;">
 """ + plotly_3d_doe_html
 
-for ester_state_plot, suggestions in all_doe_suggestions.items():
-    if suggestions.empty:
-        continue
+plt.figure(figsize=(10, 4))
+input_cols = ['Time', 'Load', 'Temperature', 'Concentration', 'Esterified', 'Hertz_Stress_MPa']
+target_cols = ['COF', 'Friction absolute integral']
+input_labels = ['Time', 'Load', 'Temperature', 'Concentration', 'Esterified', 'Hertzian Stress']
+target_labels = ['COF', 'Friction Absolute Integral']
 
-    state_str = "Esterified" if ester_state_plot == 1 else "NotEsterified"
-    title_str = "Esterified" if ester_state_plot == 1 else "Not esterified"
-    fig, axes = plt.subplots(1, 3, figsize=(15, 5), sharey=False)
-    fig.suptitle(f'2D Projections of DoE Suggestions - {title_str}', fontsize=16)
+corr_matrix = full_df[target_cols + input_cols].corr().loc[target_cols, input_cols]
 
-    projections = [('Load', 'Temperature'), ('Load', 'Concentration'), ('Temperature', 'Concentration')]
-    
-    existing_data_subset = full_df[full_df['Esterified'] == ester_state_plot]
-
-    for i, (x_ax, y_ax) in enumerate(projections):
-        axes[i].scatter(existing_data_subset[x_ax], existing_data_subset[y_ax], c='grey', alpha=0.3, s=20, label='Existing Measurements')
-        axes[i].scatter(suggestions[x_ax], suggestions[y_ax], c='red', marker='o', s=100, label='DoE Suggestions', edgecolors='black')
-        
-        axes[i].set_xlabel(f'{x_ax} [{config.NAME_MAPPING.get(x_ax, "wt%")}]')
-        axes[i].set_ylabel(f'{y_ax} [{config.NAME_MAPPING.get(y_ax, "°C" if "Temp" in y_ax else "N")}]')
-
-    handles, labels = axes[0].get_legend_handles_labels()
-    fig.legend(handles, labels, loc='upper center', bbox_to_anchor=(0.5, 0.95), ncol=2, fontsize=12)
-
-    plt.tight_layout(rect=[0, 0, 1, 0.9])
-    plt.savefig(os.path.join(config.RESULTS_DIR, f"DoE_2D_Projections_{state_str}.png"), dpi=config.PLOT_SETTINGS['dpi'], bbox_inches='tight', pad_inches=0.1)
-    plt.close()
-
-L_grid, T_grid = np.meshgrid(np.linspace(10, 200, 100), np.linspace(40, 120, 100))
-heatmap_input = create_features(pd.DataFrame({'Time': 7200, 'Load': L_grid.ravel(), 'Temperature': T_grid.ravel(), 'Concentration': opt_conc, 'Esterified': config.PLOT_ESTERIFIED_STATE}))[X_cols_raw]
-heatmap_input_trans = global_vif.transform(global_interact.transform(heatmap_input))
-cof_grid = np.maximum(best_model_overall.predict(heatmap_input_trans), config.PREDICTION_LOWER_BOUND)[:, 0].reshape(L_grid.shape)
-plt.figure(figsize=(6.3, 3.15))
-contourf_plot = plt.contourf(L_grid, T_grid, cof_grid, levels=200, cmap='plasma')
-cbar = plt.colorbar(contourf_plot)
-cbar.set_label('Coefficient of friction (COF) [-]')
-plt.xlabel("Load [N]")
-plt.ylabel("Temperature [°C]")
-plt.savefig(os.path.join(config.RESULTS_DIR, "COF_heatmap.png"), dpi=config.PLOT_SETTINGS['dpi'], bbox_inches='tight', pad_inches=0.1)
-plt.close()
-
-plt.figure(figsize=(10, 8))
-corr_cols = ['Time', 'Load', 'Temperature', 'Concentration', 'Esterified', 'COF', 'Friction absolute integral']
-corr_labels = ['Time', 'Load', 'Temperature', 'Concentration', 'Esterified', 'COF', 'Friction Absolute Integral']
-corr_matrix = full_df[corr_cols].corr()
 im = plt.imshow(corr_matrix, cmap='coolwarm', interpolation='nearest', vmin=-1, vmax=1)
 plt.colorbar(im)
 plt.grid(False)
-for i in range(len(corr_matrix.columns)):
-    for j in range(len(corr_matrix.columns)):
-        plt.text(j, i, f"{corr_matrix.iloc[i, j]:.2f}", ha="center", va="center", color="white" if abs(corr_matrix.iloc[i, j]) > 0.5 else "black", fontsize=10)
-plt.xticks(range(len(corr_labels)), corr_labels, rotation=45, ha='right', fontsize=12)
-plt.yticks(range(len(corr_labels)), corr_labels, fontsize=12)
+for i in range(len(target_cols)):
+    for j in range(len(input_cols)):
+        val = corr_matrix.iloc[i, j]
+        plt.text(j, i, f"{val:.2f}", ha="center", va="center", color="white" if abs(val) > 0.5 else "black", fontsize=10)
+plt.xticks(range(len(input_cols)), input_labels, rotation=45, ha='right', fontsize=11)
+plt.yticks(range(len(target_cols)), target_labels, fontsize=11)
 plt.tight_layout()
 plt.savefig(os.path.join(config.RESULTS_DIR, "Correlation_matrix.png"), dpi=config.PLOT_SETTINGS['dpi'], bbox_inches='tight', pad_inches=0.1)
 plt.close()
 
-plot_learning_curve(best_model_overall, X, Y, cv=GroupShuffleSplit(n_splits=config.CV_SPLITS, test_size=0.2, random_state=config.RANDOM_SEED), results_dir=config.RESULTS_DIR, groups=groups, num_files=len(np.unique(groups)))
-dynamic_descriptions["Learning_Curve.png"] = f"Learning curve ({best_model_name})."
+print("\n--- Learning Curve generálása kiválasztott modellekhez... ---")
+target_models = {"XGBoost", "LightGBM", "CatBoost", best_model_name}
+for res in results:
+    if res['Name'] in target_models:
+        model_name_safe = res['Name'].replace(' ', '_').replace('(', '').replace(')', '')
+        lc_filename = f"Learning_Curve_{model_name_safe}.png"
+        print(f"Generating learning curve for {res['Name']}...")
+        plot_learning_curve(res['Model'], X, Y, cv=GroupShuffleSplit(n_splits=config.CV_SPLITS, test_size=0.2, random_state=config.RANDOM_SEED), results_dir=config.RESULTS_DIR, groups=groups, num_files=len(np.unique(groups)), filename=lc_filename)
+        dynamic_descriptions[lc_filename] = f"Learning curve ({res['Name']})."
 
 html_path = os.path.join(config.RESULTS_DIR, "Eredmenyek_Riport.html")
 
@@ -1291,7 +1506,7 @@ file_means = full_df[last_5m_mask].groupby('File_ID')[['COF', 'Friction absolute
 file_means['Esterified'] = full_df.groupby('File_ID')['Esterified'].first()
 
 file_means_desc = file_means[['COF', 'Friction absolute integral']].describe()
-file_means_desc.columns = ['Last 5m Avg COF', 'Last 5m Avg FAI']
+file_means_desc.columns = ['Average Coefficient of Friction (Last 5 minutes)', 'Average Friction Absolute Integral (Last 5 minutes)']
 file_means_desc.index = ['Count', 'Mean', 'Std', 'Min', '25%', '50% (Median)', '75%', 'Max']
 
 # --- Generate Boxplot for Last 5m Avg COF ---
@@ -1321,13 +1536,29 @@ desc_df.index = ['Count', 'Mean', 'Std', 'Min', '25%', '50% (Median)', '75%', 'M
 desc_df.rename(columns=config.NAME_MAPPING, inplace=True)
 desc_df = pd.concat([desc_df, file_means_desc], axis=1)
 
+# --- Filtered Dataset Statistics ---
+filtered_full_df = full_df[valid_mask].copy()
+
+last_5m_mask_filt = filtered_full_df['Time'] >= filtered_full_df.groupby('File_ID')['Time'].transform('max') - 300
+file_means_filt = filtered_full_df[last_5m_mask_filt].groupby('File_ID')[['COF', 'Friction absolute integral']].mean()
+file_means_filt['Esterified'] = filtered_full_df.groupby('File_ID')['Esterified'].first()
+
+file_means_desc_filt = file_means_filt[['COF', 'Friction absolute integral']].describe()
+file_means_desc_filt.columns = ['Last 5m Avg COF', 'Last 5m Avg FAI']
+file_means_desc_filt.index = ['Count', 'Mean', 'Std', 'Min', '25%', '50% (Median)', '75%', 'Max']
+
+filtered_desc_df = filtered_full_df[['Time', 'Load', 'Temperature', 'Concentration', 'Esterified', 'COF', 'Friction absolute integral']].describe()
+filtered_desc_df.index = ['Count', 'Mean', 'Std', 'Min', '25%', '50% (Median)', '75%', 'Max']
+filtered_desc_df.rename(columns=config.NAME_MAPPING, inplace=True)
+filtered_desc_df = pd.concat([filtered_desc_df, file_means_desc_filt], axis=1)
+
 timing_stats = {
     'total': format_time(time.time() - script_start), 
     'loading': format_time(loading_duration), 
     'shap': format_time(shap_duration) if shap_duration is not None else "N/A", 
     'doe': format_time(total_doe_duration)
 }
-html_content = generate_html_report(results, xlsx_files, full_df, desc_df, html_path, config.RESULTS_DIR, doe_suggestions_combined, optimum_results, shap_analysis_text, timing_stats, dynamic_descriptions, distribution_summary, combined_plotly_html)
+html_content = generate_html_report(results, xlsx_files, full_df, desc_df, filtered_desc_df, html_path, config.RESULTS_DIR, doe_suggestions_combined, optimum_results, shap_analysis_text, timing_stats, dynamic_descriptions, distribution_summary, combined_plotly_html)
 
 with open(html_path, "w", encoding="utf-8") as f:
     f.write(html_content)
