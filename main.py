@@ -130,6 +130,18 @@ else:
                     plt.close()
 
                 all_data.append(df)
+                # --- VÁLTOZTATÁS: Csak az utolsó 5 perc átlagának megtartása ---
+                max_time = df['Time'].max()
+                last_5m_df = df[df['Time'] >= max_time - 300]
+                
+                if not last_5m_df.empty:
+                    mean_cof = last_5m_df['COF'].mean()
+                    mean_fai = last_5m_df['Friction absolute integral'].mean()
+                    summary_row = df.iloc[[-1]].copy()  # Fájlonként csak 1 sort tartunk meg
+                    summary_row['COF'] = mean_cof
+                    summary_row['Friction absolute integral'] = mean_fai
+                    summary_row['Time'] = 7200.0  # Fixáljuk az időt
+                    all_data.append(summary_row)
         except (FileNotFoundError, KeyError, ValueError) as e:
             print(f"Error: {os.path.basename(filepath)} - {e}")
 
@@ -140,17 +152,17 @@ else:
     full_df = full_df[full_df['Time'] > 0]
     full_df = full_df[(full_df['COF'] > 0) & (full_df['Friction absolute integral'] > 0)]
 
-    high_cof_mask = full_df['COF'] > 0.325
-    if high_cof_mask.any():
-        high_cof_counts = full_df[high_cof_mask].groupby('File_ID').size()
-        print(f"\nFigyelem: Extrém magas COF (> 0.325) értékek miatti szűrés. Összesen {high_cof_mask.sum()} sor érintett.")
-        for fid, count in high_cof_counts.items():
-            print(f"  - {fid}: {count} sor")
-        full_df = full_df[~high_cof_mask]
+    # high_cof_mask = full_df['COF'] > 0.325
+    # if high_cof_mask.any():
+    #     high_cof_counts = full_df[high_cof_mask].groupby('File_ID').size()
+    #     print(f"\nFigyelem: Extrém magas COF (> 0.325) értékek miatti szűrés. Összesen {high_cof_mask.sum()} sor érintett.")
+    #     for fid, count in high_cof_counts.items():
+    #         print(f"  - {fid}: {count} sor")
+    #     full_df = full_df[~high_cof_mask]
 
     full_df = create_features(full_df)
 
-    full_df = filter_outliers_grouped(full_df, 'File_ID', ['COF', 'Friction absolute integral'], low_q=0.05, high_q=0.95)
+    # full_df = filter_outliers_grouped(full_df, 'File_ID', ['COF', 'Friction absolute integral'], low_q=0.05, high_q=0.95)
 
     if 'Esterified' not in full_df.columns:
         full_df['Esterified'] = 0
@@ -161,7 +173,7 @@ else:
     full_df['Sample_Weight'] = 1.0 / counts
     full_df['Sample_Weight'] = np.sqrt(full_df['Sample_Weight'])
 
-    full_df.loc[full_df['COF'] > 0.25, 'Sample_Weight'] *= 2.5
+    #full_df.loc[full_df['COF'] > 0.25, 'Sample_Weight'] *= 2.5
     full_df['Sample_Weight'] = full_df['Sample_Weight'] * (len(full_df) / full_df['Sample_Weight'].sum())
 
     if config.USE_CACHE:
@@ -284,9 +296,9 @@ X_test = global_vif.transform(X_test_interact)
 X_interact = global_interact.transform(X)
 X = global_vif.transform(X_interact)
 
-range_conc = np.arange(0.0, 0.61, 0.05)
-range_load = np.arange(10, 201, 20)
-range_temp = np.arange(40, 121, 10)
+range_conc = np.arange(0.0, 0.61, 0.01)
+range_load = np.arange(10, 201, 5)
+range_temp = np.arange(40, 121, 5)
 combos = list(itertools.product(range_conc, range_load, range_temp))
 grid_df = pd.DataFrame(combos, columns=['Concentration', 'Load', 'Temperature'])
 grid_df['Esterified'] = config.PLOT_ESTERIFIED_STATE
@@ -474,6 +486,31 @@ if not models_loaded:
         
         mae_test = mean_absolute_error(y_test, y_pred)
         
+        # --- Állandósult (utolsó 5 perc) pontosság számítása ---
+        steady_actual_cof = []
+        steady_actual_fai = []
+        steady_pred_cof = []
+        steady_pred_fai = []
+        for fid in test_files:
+            file_data = full_df[full_df['File_ID'] == fid]
+            max_t = file_data['Time'].max()
+            last_5m = file_data[file_data['Time'] >= max_t - 300]
+            steady_actual_cof.append(last_5m['COF'].mean())
+            steady_actual_fai.append(last_5m['Friction absolute integral'].mean())
+            
+            phys_load, phys_temp, phys_conc, phys_est = file_data.iloc[0][['Load', 'Temperature', 'Concentration', 'Esterified']]
+            check_df_st = pd.DataFrame({'Time': [7050], 'Load': [phys_load], 'Temperature': [phys_temp], 'Concentration': [phys_conc], 'Esterified': [phys_est]})
+            check_df_st = create_features(check_df_st)[X_cols_raw]
+            check_df_st_trans = global_vif.transform(global_interact.transform(check_df_st))
+            preds_st = np.maximum(best_estimator.predict(check_df_st_trans), config.PREDICTION_LOWER_BOUND)
+            steady_pred_cof.append(preds_st[0, 0])
+            steady_pred_fai.append(preds_st[0, 1])
+            
+        r2_steady_cof = r2_score(steady_actual_cof, steady_pred_cof)
+        r2_steady_fai = r2_score(steady_actual_fai, steady_pred_fai)
+        rmse_steady_cof = np.sqrt(mean_squared_error(steady_actual_cof, steady_pred_cof))
+        rmse_steady_fai = np.sqrt(mean_squared_error(steady_actual_fai, steady_pred_fai))
+        
         cv_scores = cross_validate(best_estimator, X_train, y_train, cv=gkf_cv, groups=groups_train, scoring=['r2', 'neg_root_mean_squared_error'])
         avg_r2 = np.mean(cv_scores['test_r2'])
         
@@ -552,7 +589,9 @@ if not models_loaded:
         
         results.append({
             "Name": name, "Model": best_estimator, "R2_Train": r2_train, "R2_Test": r2_test, "R2_COF": r2_cof, "R2_FAI": r2_fai, "R2_CV": avg_r2,
+            "R2_Steady_COF": r2_steady_cof, "R2_Steady_FAI": r2_steady_fai,
             "RMSE_Train": rmse_train, "RMSE_Test": rmse_test, "RMSE_COF": rmse_cof, "RMSE_FAI": rmse_fai, "MAE_Test": mae_test,
+            "RMSE_Steady_COF": rmse_steady_cof, "RMSE_Steady_FAI": rmse_steady_fai,
             "Tuning_Training_Time": tuning_training_time, "Pred_Time_ms": pred_time_ms, "Feature_Imp": feature_imp,
             "Opt_Conc": opt_conc, "Opt_Load": opt_load, "Opt_Temp": opt_temp, "Pred_COF": pred_cof_5m, "Pred_FAI": pred_fai_5m,
             "Best_Params": best_params, "Selected_Features": selected_features_model,
@@ -603,6 +642,31 @@ if not models_loaded:
     rmse_cof_ens, rmse_fai_ens = rmse_test_raw_ens[0], rmse_test_raw_ens[1]
     mae_test_ens = mean_absolute_error(y_test, y_pred_ens)
     
+    # --- Állandósult (utolsó 5 perc) pontosság az Ensemble-hoz ---
+    steady_actual_cof_ens = []
+    steady_actual_fai_ens = []
+    steady_pred_cof_ens = []
+    steady_pred_fai_ens = []
+    for fid in test_files:
+        file_data = full_df[full_df['File_ID'] == fid]
+        max_t = file_data['Time'].max()
+        last_5m = file_data[file_data['Time'] >= max_t - 300]
+        steady_actual_cof_ens.append(last_5m['COF'].mean())
+        steady_actual_fai_ens.append(last_5m['Friction absolute integral'].mean())
+        
+        phys_load, phys_temp, phys_conc, phys_est = file_data.iloc[0][['Load', 'Temperature', 'Concentration', 'Esterified']]
+        check_df_st = pd.DataFrame({'Time': [7050], 'Load': [phys_load], 'Temperature': [phys_temp], 'Concentration': [phys_conc], 'Esterified': [phys_est]})
+        check_df_st = create_features(check_df_st)[X_cols_raw]
+        check_df_st_trans = global_vif.transform(global_interact.transform(check_df_st))
+        preds_st = np.maximum(ensemble_model.predict(check_df_st_trans), config.PREDICTION_LOWER_BOUND)
+        steady_pred_cof_ens.append(preds_st[0, 0])
+        steady_pred_fai_ens.append(preds_st[0, 1])
+        
+    r2_steady_cof_ens = r2_score(steady_actual_cof_ens, steady_pred_cof_ens)
+    r2_steady_fai_ens = r2_score(steady_actual_fai_ens, steady_pred_fai_ens)
+    rmse_steady_cof_ens = np.sqrt(mean_squared_error(steady_actual_cof_ens, steady_pred_cof_ens))
+    rmse_steady_fai_ens = np.sqrt(mean_squared_error(steady_actual_fai_ens, steady_pred_fai_ens))
+
     avg_r2_ens = np.mean([r['R2_CV'] for r in top3_results])
     tuning_training_time_ens = sum([r['Tuning_Training_Time'] for r in top3_results])
     
@@ -666,7 +730,9 @@ if not models_loaded:
 
     results.append({
         "Name": ensemble_name, "Model": ensemble_model, "R2_Train": r2_train_ens, "R2_Test": r2_test_ens, "R2_COF": r2_cof_ens, "R2_FAI": r2_fai_ens, "R2_CV": avg_r2_ens,
+        "R2_Steady_COF": r2_steady_cof_ens, "R2_Steady_FAI": r2_steady_fai_ens,
         "RMSE_Train": rmse_train_ens, "RMSE_Test": rmse_test_ens, "RMSE_COF": rmse_cof_ens, "RMSE_FAI": rmse_fai_ens, "MAE_Test": mae_test_ens,
+        "RMSE_Steady_COF": rmse_steady_cof_ens, "RMSE_Steady_FAI": rmse_steady_fai_ens,
         "Tuning_Training_Time": tuning_training_time_ens, "Pred_Time_ms": pred_time_ms_ens, "Feature_Imp": None,
         "Opt_Conc": opt_conc_ens, "Opt_Load": opt_load_ens, "Opt_Temp": opt_temp_ens, "Pred_COF": pred_cof_5m_ens, "Pred_FAI": pred_fai_5m_ens,
         "Best_Params": f"Voting of: {', '.join(top3_names)}", "Selected_Features": global_vif.selected_features_,
@@ -810,7 +876,7 @@ for ester_state in [0, 1]:
     for l in [opt_load * 0.9, opt_load, opt_load * 1.1]:
         for t in [opt_temp * 0.9, opt_temp, opt_temp * 1.1]:
             if l == opt_load and t == opt_temp: continue
-            stab_inputs.append({'Time': 7200, 'Load': l, 'Temperature': t, 'Concentration': opt_conc, 'Esterified': ester_state})
+            stab_inputs.append({'Time': 7050, 'Load': l, 'Temperature': t, 'Concentration': opt_conc, 'Esterified': ester_state})
     
     if stab_inputs:
         stab_df = create_features(pd.DataFrame(stab_inputs))[X_cols_raw]
@@ -849,7 +915,7 @@ for ester_state_doe in [0, 1]:
         
         doe_combos = list(itertools.product(range_conc, range_load, range_temp, [ester_state_doe]))
         doe_grid_df = pd.DataFrame(doe_combos, columns=['Concentration', 'Load', 'Temperature', 'Esterified'])
-        doe_grid_df['Time'] = 7200
+        doe_grid_df['Time'] = 7050
         doe_grid_df = create_features(doe_grid_df)[X_cols_raw]
         
         grid_doe = global_vif.transform(global_interact.transform(doe_grid_df))
@@ -1217,8 +1283,8 @@ plt.close()
 
 print("\n--- Generating Trend Analysis Plot (Temperature vs COF) ---")
 trend_temp_range = np.linspace(40, 120, 20)
-trend_df_base = pd.DataFrame({'Time': 7200, 'Load': 100, 'Temperature': trend_temp_range, 'Concentration': 0.5, 'Esterified': 0})
-trend_df_ester = pd.DataFrame({'Time': 7200, 'Load': 100, 'Temperature': trend_temp_range, 'Concentration': 0.5, 'Esterified': config.PLOT_ESTERIFIED_STATE})
+trend_df_base = pd.DataFrame({'Time': 7050, 'Load': 100, 'Temperature': trend_temp_range, 'Concentration': 0.5, 'Esterified': 0})
+trend_df_ester = pd.DataFrame({'Time': 7050, 'Load': 100, 'Temperature': trend_temp_range, 'Concentration': 0.5, 'Esterified': config.PLOT_ESTERIFIED_STATE})
 trend_df_base = create_features(trend_df_base)[X_cols_raw]
 trend_df_ester = create_features(trend_df_ester)[X_cols_raw]
 trend_base_trans = global_vif.transform(global_interact.transform(trend_df_base))
@@ -1242,8 +1308,8 @@ plt.close()
 
 print("\n--- Generating Trend Analysis Plot (Temperature vs COF) [Optimum Bonus] ---")
 trend_temp_range_sm = np.linspace(40, 120, 20)
-trend_df_base_sm = pd.DataFrame({'Time': 7200, 'Load': opt_load, 'Temperature': trend_temp_range_sm, 'Concentration': opt_conc, 'Esterified': 0})
-trend_df_ester_sm = pd.DataFrame({'Time': 7200, 'Load': opt_load, 'Temperature': trend_temp_range_sm, 'Concentration': opt_conc, 'Esterified': config.PLOT_ESTERIFIED_STATE})
+trend_df_base_sm = pd.DataFrame({'Time': 7050, 'Load': opt_load, 'Temperature': trend_temp_range_sm, 'Concentration': opt_conc, 'Esterified': 0})
+trend_df_ester_sm = pd.DataFrame({'Time': 7050, 'Load': opt_load, 'Temperature': trend_temp_range_sm, 'Concentration': opt_conc, 'Esterified': config.PLOT_ESTERIFIED_STATE})
 trend_df_base_sm = create_features(trend_df_base_sm)[X_cols_raw]
 trend_df_ester_sm = create_features(trend_df_ester_sm)[X_cols_raw]
 trend_base_trans_sm = global_vif.transform(global_interact.transform(trend_df_base_sm))
@@ -1267,8 +1333,8 @@ plt.close()
 
 print("\n--- Generating Trend Analysis Plot (Load vs COF) ---")
 trend_load_range = np.linspace(10, 200, 20)
-trend_df_base_load = pd.DataFrame({'Time': 7200, 'Load': trend_load_range, 'Temperature': 100, 'Concentration': 0.5, 'Esterified': 0})
-trend_df_ester_load = pd.DataFrame({'Time': 7200, 'Load': trend_load_range, 'Temperature': 100, 'Concentration': 0.5, 'Esterified': config.PLOT_ESTERIFIED_STATE})
+trend_df_base_load = pd.DataFrame({'Time': 7050, 'Load': trend_load_range, 'Temperature': 100, 'Concentration': 0.5, 'Esterified': 0})
+trend_df_ester_load = pd.DataFrame({'Time': 7050, 'Load': trend_load_range, 'Temperature': 100, 'Concentration': 0.5, 'Esterified': config.PLOT_ESTERIFIED_STATE})
 trend_df_base_load = create_features(trend_df_base_load)[X_cols_raw]
 trend_df_ester_load = create_features(trend_df_ester_load)[X_cols_raw]
 trend_base_trans_load = global_vif.transform(global_interact.transform(trend_df_base_load))
@@ -1311,8 +1377,8 @@ plt.close()
 
 print("\n--- Generating Trend Analysis Plot (Load vs COF) [Optimum Bonus] ---")
 trend_load_range_sm = np.linspace(10, 200, 20)
-trend_df_base_load_sm = pd.DataFrame({'Time': 7200, 'Load': trend_load_range_sm, 'Temperature': opt_temp, 'Concentration': opt_conc, 'Esterified': 0})
-trend_df_ester_load_sm = pd.DataFrame({'Time': 7200, 'Load': trend_load_range_sm, 'Temperature': opt_temp, 'Concentration': opt_conc, 'Esterified': config.PLOT_ESTERIFIED_STATE})
+trend_df_base_load_sm = pd.DataFrame({'Time': 7050, 'Load': trend_load_range_sm, 'Temperature': opt_temp, 'Concentration': opt_conc, 'Esterified': 0})
+trend_df_ester_load_sm = pd.DataFrame({'Time': 7050, 'Load': trend_load_range_sm, 'Temperature': opt_temp, 'Concentration': opt_conc, 'Esterified': config.PLOT_ESTERIFIED_STATE})
 trend_df_base_load_sm = create_features(trend_df_base_load_sm)[X_cols_raw]
 trend_df_ester_load_sm = create_features(trend_df_ester_load_sm)[X_cols_raw]
 trend_base_trans_load_sm = global_vif.transform(global_interact.transform(trend_df_base_load_sm))
@@ -1336,8 +1402,8 @@ plt.close()
 
 print("\n--- Generating Trend Analysis Plot (Concentration vs COF) ---")
 trend_conc_range = np.linspace(0, 0.6, 20)
-trend_df_base_conc = pd.DataFrame({'Time': 7200, 'Load': 100, 'Temperature': 100, 'Concentration': trend_conc_range, 'Esterified': 0})
-trend_df_ester_conc = pd.DataFrame({'Time': 7200, 'Load': 100, 'Temperature': 100, 'Concentration': trend_conc_range, 'Esterified': config.PLOT_ESTERIFIED_STATE})
+trend_df_base_conc = pd.DataFrame({'Time': 7050, 'Load': 100, 'Temperature': 100, 'Concentration': trend_conc_range, 'Esterified': 0})
+trend_df_ester_conc = pd.DataFrame({'Time': 7050, 'Load': 100, 'Temperature': 100, 'Concentration': trend_conc_range, 'Esterified': config.PLOT_ESTERIFIED_STATE})
 trend_df_base_conc = create_features(trend_df_base_conc)[X_cols_raw]
 trend_df_ester_conc = create_features(trend_df_ester_conc)[X_cols_raw]
 trend_base_trans_conc = global_vif.transform(global_interact.transform(trend_df_base_conc))
@@ -1362,8 +1428,8 @@ plt.close()
 
 print("\n--- Generating Trend Analysis Plot (Concentration vs COF) [Optimum Bonus] ---")
 trend_conc_range_sm = np.linspace(0, 0.6, 20)
-trend_df_base_conc_sm = pd.DataFrame({'Time': 7200, 'Load': opt_load, 'Temperature': opt_temp, 'Concentration': trend_conc_range_sm, 'Esterified': 0})
-trend_df_ester_conc_sm = pd.DataFrame({'Time': 7200, 'Load': opt_load, 'Temperature': opt_temp, 'Concentration': trend_conc_range_sm, 'Esterified': config.PLOT_ESTERIFIED_STATE})
+trend_df_base_conc_sm = pd.DataFrame({'Time': 7050, 'Load': opt_load, 'Temperature': opt_temp, 'Concentration': trend_conc_range_sm, 'Esterified': 0})
+trend_df_ester_conc_sm = pd.DataFrame({'Time': 7050, 'Load': opt_load, 'Temperature': opt_temp, 'Concentration': trend_conc_range_sm, 'Esterified': config.PLOT_ESTERIFIED_STATE})
 trend_df_base_conc_sm = create_features(trend_df_base_conc_sm)[X_cols_raw]
 trend_df_ester_conc_sm = create_features(trend_df_ester_conc_sm)[X_cols_raw]
 trend_base_trans_conc_sm = global_vif.transform(global_interact.transform(trend_df_base_conc_sm))
@@ -1385,6 +1451,62 @@ ax.xaxis.set_major_formatter(FuncFormatter(lambda x, _: f'{x:g}'))
 dynamic_descriptions["Concentration_Trend_Analysis_Optimum.png"] = f"Concentration Trend Analysis at Optimum (Load: {int(opt_load)}N, Temp: {int(opt_temp)}°C)."
 plt.savefig(os.path.join(config.RESULTS_DIR, "Concentration_Trend_Analysis_Optimum.png"), dpi=config.PLOT_SETTINGS['dpi'], bbox_inches='tight', pad_inches=0.1)
 plt.close()
+
+print("\n--- 2D Válaszfelületek (Contour Plots) generálása... ---")
+def plot_contour(var1_name, var1_range, var2_name, var2_range, fixed_vars, filename_suffix):
+    V1, V2 = np.meshgrid(var1_range, var2_range)
+    grid_flat = pd.DataFrame({
+        var1_name: V1.ravel(),
+        var2_name: V2.ravel()
+    })
+    for k, v in fixed_vars.items():
+        grid_flat[k] = v
+        
+    grid_flat['Time'] = 7050
+    grid_flat['Esterified'] = config.PLOT_ESTERIFIED_STATE
+    
+    grid_features = create_features(grid_flat)[X_cols_raw]
+    grid_trans = global_vif.transform(global_interact.transform(grid_features))
+    preds = np.maximum(best_model_overall.predict(grid_trans), config.PREDICTION_LOWER_BOUND)[:, 0]
+    
+    Z = preds.reshape(V1.shape)
+    
+    fig, ax = plt.subplots(figsize=(6.3, 4.5))
+    c = ax.contourf(V1, V2, Z, levels=30, cmap='viridis', alpha=0.9)
+    ax.contour(V1, V2, Z, levels=10, colors='black', linewidths=0.5, alpha=0.5)
+    cbar = fig.colorbar(c, ax=ax)
+    cbar.set_label('Expected COF [-]')
+    
+    ax.set_xlabel(config.NAME_MAPPING.get(var1_name, f"{var1_name}"))
+    ax.set_ylabel(config.NAME_MAPPING.get(var2_name, f"{var2_name}"))
+    
+    title_str = ", ".join([f"{k}: {v:g}" for k, v in fixed_vars.items()])
+    ester_str = "Esterified" if config.PLOT_ESTERIFIED_STATE == 1 else "Base Oil"
+    plt.title(f"Contour Plot ({title_str}, {ester_str})", fontsize=10, pad=10)
+    
+    fname = f"Contour_{filename_suffix}.png"
+    plt.savefig(os.path.join(config.RESULTS_DIR, fname), dpi=config.PLOT_SETTINGS['dpi'], bbox_inches='tight', pad_inches=0.1)
+    plt.close()
+    return fname
+
+curr_opt_temp = optimum_results[config.PLOT_ESTERIFIED_STATE]['Temp']
+curr_opt_load = optimum_results[config.PLOT_ESTERIFIED_STATE]['Load']
+curr_opt_conc = optimum_results[config.PLOT_ESTERIFIED_STATE]['Conc']
+
+c1_range = np.linspace(0, 0.6, 50)
+l1_range = np.linspace(10, 200, 50)
+fn1 = plot_contour('Concentration', c1_range, 'Load', l1_range, {'Temperature': curr_opt_temp}, 'Conc_Load')
+dynamic_descriptions[fn1] = f"2D Contour Plot showing expected COF for Concentration vs Load at optimal Temperature ({int(curr_opt_temp)}°C)."
+
+l2_range = np.linspace(10, 200, 50)
+t2_range = np.linspace(40, 120, 50)
+fn2 = plot_contour('Load', l2_range, 'Temperature', t2_range, {'Concentration': curr_opt_conc}, 'Load_Temp')
+dynamic_descriptions[fn2] = f"2D Contour Plot showing expected COF for Load vs Temperature at optimal Concentration ({curr_opt_conc:.2f}wt%)."
+
+t3_range = np.linspace(40, 120, 50)
+c3_range = np.linspace(0, 0.6, 50)
+fn3 = plot_contour('Temperature', t3_range, 'Concentration', c3_range, {'Load': curr_opt_load}, 'Temp_Conc')
+dynamic_descriptions[fn3] = f"2D Contour Plot showing expected COF for Temperature vs Concentration at optimal Load ({int(curr_opt_load)}N)."
 
 plot_df = full_df.groupby('File_ID').agg({'Load': 'mean', 'Temperature': 'mean', 'Concentration': 'mean', 'Esterified': 'first'}).reset_index()
 
@@ -1469,9 +1591,9 @@ combined_plotly_html = plotly_3d_html + """
 """ + plotly_3d_doe_html
 
 plt.figure(figsize=(10, 4))
-input_cols = ['Time', 'Load', 'Temperature', 'Concentration', 'Esterified', 'Hertz_Stress_MPa']
+input_cols = ['Time', 'Load', 'Temperature', 'Concentration', 'Esterified']
 target_cols = ['COF', 'Friction absolute integral']
-input_labels = ['Time', 'Load', 'Temperature', 'Concentration', 'Esterified', 'Hertzian Stress']
+input_labels = ['Time', 'Load', 'Temperature', 'Concentration', 'Esterified']
 target_labels = ['COF', 'Friction Absolute Integral']
 
 corr_matrix = full_df[target_cols + input_cols].corr().loc[target_cols, input_cols]
@@ -1565,7 +1687,8 @@ with open(html_path, "w", encoding="utf-8") as f:
 
 excel_path = os.path.join(config.RESULTS_DIR, "Results_Tables.xlsx")
 with pd.ExcelWriter(excel_path) as writer:
-    pd.DataFrame(results)[['Name', 'R2_Train', 'R2_Test', 'R2_CV', 'RMSE_Train', 'RMSE_Test', 'MAE_Test', 'Tuning_Training_Time', 'Pred_Time_ms']].to_excel(writer, sheet_name='Model_Metrics', index=False)
+    excel_cols = ['Name', 'R2_Train', 'R2_Test', 'R2_CV', 'R2_Steady_COF', 'R2_Steady_FAI', 'RMSE_Train', 'RMSE_Test', 'RMSE_Steady_COF', 'RMSE_Steady_FAI', 'MAE_Test', 'Tuning_Training_Time', 'Pred_Time_ms']
+    pd.DataFrame(results)[excel_cols].to_excel(writer, sheet_name='Model_Metrics', index=False)
     opt_data = [{'Type': 'Esterified' if s == 1 else 'Not esterified', **r} for s, r in optimum_results.items()]
     pd.DataFrame(opt_data).drop(columns=['CurveTime', 'CurveCOF']).to_excel(writer, sheet_name='Optimums', index=False)
     doe_suggestions_combined.to_excel(writer, sheet_name='DoE_Suggestions', index=False)
