@@ -280,9 +280,11 @@ def generate_html_report(results, xlsx_files, full_df, desc_df, filtered_desc_df
                     <tr>
                         <th>Model</th>
                         <th>R² (Train/Test/CV)</th>
-                        <th>R² (COF/FAI)</th>
+                        <th>R² Full (COF/FAI)</th>
+                        <th>R² Steady (COF/FAI)</th>
                         <th>RMSE (Train/Test)</th>
-                        <th>RMSE (COF/FAI)</th>
+                        <th>RMSE Full (COF/FAI)</th>
+                        <th>RMSE Steady (COF/FAI)</th>
                         <th>MAE (Test)</th>
                         <th>Optimum (Conc./Load/Temp.)</th>
                         <th>Predicted value at the last 5 minutes (COF/FAI)</th>
@@ -299,8 +301,10 @@ def generate_html_report(results, xlsx_files, full_df, desc_df, filtered_desc_df
         time_str = f"{format_time(res['Tuning_Training_Time'])}/{res['Pred_Time_ms']:.1f}ms"
         r2_str = f"{res['R2_Train']:.2f}/{res['R2_Test']:.2f}/{res['R2_CV']:.2f}"
         r2_split_str = f"{res['R2_COF']:.2f}/{res['R2_FAI']:.2f}"
+        r2_steady_str = f"{res.get('R2_Steady_COF', 0):.2f}/{res.get('R2_Steady_FAI', 0):.2f}"
         rmse_str = f"{res['RMSE_Train']:.4f}/{res['RMSE_Test']:.4f}"
         rmse_split_str = f"{res['RMSE_COF']:.4f}/{res['RMSE_FAI']:.4f}"
+        rmse_steady_str = f"{res.get('RMSE_Steady_COF', 0):.4f}/{res.get('RMSE_Steady_FAI', 0):.4f}"
         
         runin_val = res.get('RunIn_Time', 0)
         runin_str = f"{runin_val:.1f}" if isinstance(runin_val, (int, float)) else "N/A"
@@ -312,8 +316,10 @@ def generate_html_report(results, xlsx_files, full_df, desc_df, filtered_desc_df
                         <td><strong>{res['Name']}</strong></td>
                         <td>{r2_str}</td>
                         <td>{r2_split_str}</td>
+                        <td>{r2_steady_str}</td>
                         <td>{rmse_str}</td>
                         <td>{rmse_split_str}</td>
+                        <td>{rmse_steady_str}</td>
                         <td>{res['MAE_Test']:.4f}</td>
                         <td>{opt_str}</td>
                         <td>{pred_str}</td>
@@ -346,9 +352,11 @@ def generate_html_report(results, xlsx_files, full_df, desc_df, filtered_desc_df
             <h3>{res['Name']}</h3>
             <ul>
                 <li><strong>R² (Train/Test/CV):</strong> {res['R2_Train']:.4f}/{res['R2_Test']:.4f}/{res['R2_CV']:.4f}</li>
-                <li><strong>R² Split (COF/FAI):</strong> {res['R2_COF']:.4f}/{res['R2_FAI']:.4f}</li>
+                <li><strong>R² Full Split (COF/FAI):</strong> {res['R2_COF']:.4f}/{res['R2_FAI']:.4f}</li>
+                <li><strong>R² Steady (COF/FAI):</strong> {res.get('R2_Steady_COF', 0):.4f}/{res.get('R2_Steady_FAI', 0):.4f}</li>
                 <li><strong>RMSE (Train/Test):</strong> {res['RMSE_Train']:.4f}/{res['RMSE_Test']:.4f}</li>
-                <li><strong>RMSE Split (COF/FAI):</strong> {res['RMSE_COF']:.4f}/{res['RMSE_FAI']:.4f}</li>
+                <li><strong>RMSE Full Split (COF/FAI):</strong> {res['RMSE_COF']:.4f}/{res['RMSE_FAI']:.4f}</li>
+                <li><strong>RMSE Steady (COF/FAI):</strong> {res.get('RMSE_Steady_COF', 0):.4f}/{res.get('RMSE_Steady_FAI', 0):.4f}</li>
                 <li><strong>MAE (Test):</strong> {res['MAE_Test']:.4f}</li>
                 <li><strong>Best hyperparameters:</strong> {params_str}</li>
                 <li><strong>Times (Tuning & Train / Predict):</strong> {format_time(res['Tuning_Training_Time'])} / {res['Pred_Time_ms']:.2f} ms</li>
