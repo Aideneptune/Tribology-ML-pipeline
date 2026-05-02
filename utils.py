@@ -80,8 +80,10 @@ def plot_pareto_front(results_dir, predictions, color_values, color_label="Tempe
         knee_idx = np.argmax(distances)
         knee_cof = pareto_cof[knee_idx]
         knee_fai = pareto_fai[knee_idx]
+        knee_orig_idx = pareto_indices[sorted_indices[knee_idx]]
     else:
         knee_cof, knee_fai = pareto_cof[0], pareto_fai[0]
+        knee_orig_idx = pareto_indices[sorted_indices[0]]
 
     plt.figure(figsize=(6.3, 3.15))
     if discrete:
@@ -113,6 +115,8 @@ def plot_pareto_front(results_dir, predictions, color_values, color_label="Tempe
     plt.savefig(os.path.join(results_dir, filename), dpi=config.PLOT_SETTINGS['dpi'], bbox_inches='tight', pad_inches=0.1)
     plt.savefig(os.path.join(results_dir, filename.replace('.png', '.svg')), format='svg', bbox_inches='tight', pad_inches=0.1)
     plt.close()
+        
+    return knee_cof, knee_fai, knee_orig_idx
 
 def plot_learning_curve(estimator, X, y, cv=None, n_jobs=-1, train_sizes=np.linspace(0.2, 1.0, 10), results_dir=".", groups=None, num_files=1, filename="Learning_Curve.png"):
     """Tanulási görbe generálása és mentése."""
@@ -215,7 +219,7 @@ def generate_html_report(results, xlsx_files, full_df, desc_df, filtered_desc_df
         <ul>
             <li><strong>Number of processed files:</strong> {len(xlsx_files)}</li>
             <li><strong>Dataset size:</strong> {len(full_df)} rows</li>
-            <li><strong>Train/Test split:</strong> 80%/20%</li>
+                <li><strong>Train/Test split:</strong> {int((1 - config.TEST_SIZE) * 100)}%/{int(config.TEST_SIZE * 100)}%</li>
             <li><strong>Cross-validation (CV):</strong> GroupKFold (10-fold)</li>
             <li><strong>Hyperparameter optimization:</strong> Optuna Bayesian Optimization (TPE, 50 trials, 10-fold CV)</li>"""
             
