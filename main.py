@@ -173,7 +173,10 @@ else:
     full_df['Sample_Weight'] = 1.0 / counts
     full_df['Sample_Weight'] = np.sqrt(full_df['Sample_Weight'])
 
-    #full_df.loc[full_df['COF'] > 0.25, 'Sample_Weight'] *= 2.5
+    # --- Magas COF értékek (extrém súrlódás/berágódás) alulsúlyozása ---
+    # Ezzel csökkenthető a modell túlbecslési (overestimation) hajlama a normál tartományban
+    #full_df.loc[full_df['COF'] > 0.25, 'Sample_Weight'] *= 0.5
+
     full_df['Sample_Weight'] = full_df['Sample_Weight'] * (len(full_df) / full_df['Sample_Weight'].sum())
 
     if config.USE_CACHE:
@@ -262,7 +265,7 @@ except ValueError:
 
 file_stats['Stratify_Label'] = file_stats['Load_Bin'].astype(str) + "_" + file_stats['Temp_Bin'].astype(str)
 
-splitter = StratifiedShuffleSplit(n_splits=1, test_size=0.2, random_state=config.RANDOM_SEED)
+splitter = StratifiedShuffleSplit(n_splits=1, test_size=config.TEST_SIZE, random_state=config.RANDOM_SEED)
 train_files_idx, test_files_idx = next(splitter.split(file_stats, file_stats['Stratify_Label']))
 
 train_files = file_stats.index[train_files_idx]
@@ -296,9 +299,9 @@ X_test = global_vif.transform(X_test_interact)
 X_interact = global_interact.transform(X)
 X = global_vif.transform(X_interact)
 
-range_conc = np.arange(0.0, 0.61, 0.01)
-range_load = np.arange(10, 201, 5)
-range_temp = np.arange(40, 121, 5)
+range_conc = np.arange(0.0, 0.61, config.GRID_STEP_CONC)
+range_load = np.arange(10, 201, config.GRID_STEP_LOAD)
+range_temp = np.arange(40, 121, config.GRID_STEP_TEMP)
 combos = list(itertools.product(range_conc, range_load, range_temp))
 grid_df = pd.DataFrame(combos, columns=['Concentration', 'Load', 'Temperature'])
 grid_df['Esterified'] = config.PLOT_ESTERIFIED_STATE
@@ -830,8 +833,9 @@ pareto_configs = [
     ('Esterified', 'Esterified State (0/1)', 'Pareto_Esterified.png', True)
 ]
 for col, label, fname, is_discrete in pareto_configs:
-    plot_pareto_front(config.RESULTS_DIR, pareto_preds, pareto_grid_df[col], color_label=label, title=f"Pareto front - Colored by {col}", filename=fname, discrete=is_discrete)
-    dynamic_descriptions[fname] = f"Pareto front over the full parameter grid, colored by {col}."
+    knee_cof, knee_fai, knee_idx = plot_pareto_front(config.RESULTS_DIR, pareto_preds, pareto_grid_df[col], color_label=label, title=f"Pareto front - Colored by {col}", filename=fname, discrete=is_discrete)
+    opt_row = pareto_grid_df.iloc[knee_idx]
+    dynamic_descriptions[fname] = f"Pareto front over the full parameter grid, colored by {col}. Knee point (Trade-off optimum) achieved at: {opt_row['Concentration']:.2f} wt% Conc, {int(opt_row['Load'])} N Load, {int(opt_row['Temperature'])} °C Temp, Esterified: {int(opt_row['Esterified'])} (COF: {knee_cof:.3f}, FAI: {knee_fai:.3f})."
 
 for ester_state in [0, 1]:
     grid_df['Esterified'] = ester_state
@@ -1155,28 +1159,83 @@ print("\n--- Reziduális elemzés (Residual Plot) adatok kiszámítása... ---")
 y_test_pred = np.maximum(best_model_overall.predict(X_test_filtered), config.PREDICTION_LOWER_BOUND)
 residuals = y_test_pred[:, 0] - y_test_filtered['COF'].values
 
-print("\n--- Hibák eloszlása (Residual Histogram) generálása... ---")
-fig, ax = plt.subplots(figsize=(6.3, 3.15))
-plt.hist(residuals, bins=30, color='purple', edgecolor='black', alpha=0.7)
-plt.axvline(0, color='black', linestyle='--', linewidth=2)
-plt.xlabel("Residual Error (Predicted - Actual)")
-plt.ylabel("Frequency")
-dynamic_descriptions["Residual_Histogram.png"] = "Histogram of residual errors for the best model."
-plt.savefig(os.path.join(config.RESULTS_DIR, "Residual_Histogram.png"), dpi=config.PLOT_SETTINGS['dpi'], bbox_inches='tight', pad_inches=0.1)
-plt.close()
+print("\n--- Tényleges vs. Becsült értékek és Reziduális Hisztogramok generálása minden modellhez... ---")
+for res in results:
+    model = res['Model']
+    model_name = res['Name']
+    safe_name = model_name.replace(' ', '_').replace('(', '').replace(')', '')
+    
+    preds = np.maximum(model.predict(X_test), config.PREDICTION_LOWER_BOUND)
+    
+    # 1. Actual vs Predicted Plot
+    fig, ax = plt.subplots(figsize=(6.3, 3.15))
+    plt.scatter(y_test['COF'].values, preds[:, 0], alpha=0.6, color='orange', edgecolors='k')
+    min_val = min(np.min(y_test['COF'].values), np.min(preds[:, 0]))
+    max_val = max(np.max(y_test['COF'].values), np.max(preds[:, 0]))
+    plt.plot([min_val, max_val], [min_val, max_val], color='black', linestyle='--', linewidth=2)
+    plt.xlabel("Actual COF")
+    plt.ylabel("Predicted COF")
+    plt.title(f"{model_name}", fontsize=11)
+    ax.yaxis.set_major_formatter(FuncFormatter(lambda y, _: f'{y:g}'))
+    ax.xaxis.set_major_formatter(FuncFormatter(lambda x, _: f'{x:g}'))
+    
+    filename = f"Actual_vs_Predicted_{safe_name}.png"
+    dynamic_descriptions[filename] = f"Scatter plot of Actual vs. Predicted COF values for {model_name}."
+    plt.savefig(os.path.join(config.RESULTS_DIR, filename), dpi=config.PLOT_SETTINGS['dpi'], bbox_inches='tight', pad_inches=0.1)
+    plt.close()
 
-print("\n--- Tényleges vs. Becsült értékek (Actual vs. Predicted) generálása... ---")
-fig, ax = plt.subplots(figsize=(6.3, 3.15))
-plt.scatter(y_test_filtered['COF'].values, y_test_pred[:, 0], alpha=0.6, color='orange', edgecolors='k')
-min_val = min(np.min(y_test_filtered['COF'].values), np.min(y_test_pred[:, 0]))
-max_val = max(np.max(y_test_filtered['COF'].values), np.max(y_test_pred[:, 0]))
-plt.plot([min_val, max_val], [min_val, max_val], color='black', linestyle='--', linewidth=2)
-plt.xlabel("Actual COF")
-plt.ylabel("Predicted COF")
-ax.yaxis.set_major_formatter(FuncFormatter(lambda y, _: f'{y:g}'))
-ax.xaxis.set_major_formatter(FuncFormatter(lambda x, _: f'{x:g}'))
-dynamic_descriptions["Actual_vs_Predicted.png"] = "Scatter plot of Actual vs. Predicted COF values."
-plt.savefig(os.path.join(config.RESULTS_DIR, "Actual_vs_Predicted.png"), dpi=config.PLOT_SETTINGS['dpi'], bbox_inches='tight', pad_inches=0.1)
+    # 2. Residual Histogram Plot
+    model_residuals = preds[:, 0] - y_test['COF'].values
+    fig, ax = plt.subplots(figsize=(6.3, 3.15))
+    plt.hist(model_residuals, bins=30, color='purple', edgecolor='black', alpha=0.7)
+    plt.axvline(0, color='black', linestyle='--', linewidth=2)
+    plt.xlabel("Residual Error (Predicted - Actual)")
+    plt.ylabel("Frequency")
+    plt.title(f"{model_name}", fontsize=11)
+    
+    hist_filename = f"Residual_Histogram_{safe_name}.png"
+    dynamic_descriptions[hist_filename] = f"Histogram of residual errors for {model_name}."
+    plt.savefig(os.path.join(config.RESULTS_DIR, hist_filename), dpi=config.PLOT_SETTINGS['dpi'], bbox_inches='tight', pad_inches=0.1)
+    plt.close()
+
+print("\n--- Modellek összehasonlító diagramjának generálása... ---")
+model_names = [res['Name'] for res in results]
+r2_scores = [res['R2_Test'] for res in results]
+rmse_scores = [res['RMSE_Test'] for res in results]
+
+x = np.arange(len(model_names))
+width = 0.35
+
+fig, ax1 = plt.subplots(figsize=(10, 5))
+ax1.set_xlabel('Models', fontweight='bold')
+ax1.set_ylabel('R² Score', color='purple', fontweight='bold')
+bars1 = ax1.bar(x - width/2, r2_scores, width, label='R² (Test)', color='purple', alpha=0.8, edgecolor='black')
+ax1.tick_params(axis='y', labelcolor='purple')
+ax1.set_ylim(min(0, min(r2_scores) * 1.1) if r2_scores else 0, 1.05)
+ax1.set_xticks(x)
+ax1.set_xticklabels(model_names, rotation=45, ha='right')
+
+ax2 = ax1.twinx()
+ax2.set_ylabel('RMSE', color='orange', fontweight='bold')
+bars2 = ax2.bar(x + width/2, rmse_scores, width, label='RMSE (Test)', color='orange', alpha=0.8, edgecolor='black')
+ax2.tick_params(axis='y', labelcolor='orange')
+ax2.set_ylim(0, max(rmse_scores) * 1.2 if rmse_scores else 1.0)
+
+for bar in bars1:
+    yval = bar.get_height()
+    ax1.text(bar.get_x() + bar.get_width()/2, yval + 0.01, f'{yval:.3f}', ha='center', va='bottom', color='purple', fontsize=9, rotation=90)
+    
+for bar in bars2:
+    yval = bar.get_height()
+    ax2.text(bar.get_x() + bar.get_width()/2, yval + (max(rmse_scores)*0.01), f'{yval:.4f}', ha='center', va='bottom', color='orange', fontsize=9, rotation=90)
+
+lines_1, labels_1 = ax1.get_legend_handles_labels()
+lines_2, labels_2 = ax2.get_legend_handles_labels()
+ax1.legend(lines_1 + lines_2, labels_1 + labels_2, loc='upper left', bbox_to_anchor=(1.05, 1))
+
+fig.tight_layout()
+dynamic_descriptions["Model_comparison.png"] = "Grouped bar chart comparing the accuracy (R²) and error (RMSE) of all trained models on the test dataset."
+plt.savefig(os.path.join(config.RESULTS_DIR, "Model_comparison.png"), dpi=config.PLOT_SETTINGS['dpi'], bbox_inches='tight', pad_inches=0.1)
 plt.close()
 
 print("\n--- RMSE vizsgálata normál és magas COF tartományokon (Teszt halmaz) ---")
@@ -1281,175 +1340,372 @@ plt.legend(loc='upper right')
 plt.savefig(os.path.join(config.RESULTS_DIR, "Optimum_comparison.png"), dpi=config.PLOT_SETTINGS['dpi'], bbox_inches='tight', pad_inches=0.1)
 plt.close()
 
+top3_trend_res = sorted(results, key=lambda x: x['R2_CV'], reverse=True)[:3]
+trend_opt_load = optimum_results[config.PLOT_ESTERIFIED_STATE]['Load']
+trend_opt_temp = optimum_results[config.PLOT_ESTERIFIED_STATE]['Temp']
+trend_opt_conc = optimum_results[config.PLOT_ESTERIFIED_STATE]['Conc']
+
 print("\n--- Generating Trend Analysis Plot (Temperature vs COF) ---")
 trend_temp_range = np.linspace(40, 120, 20)
-trend_df_base = pd.DataFrame({'Time': 7050, 'Load': 100, 'Temperature': trend_temp_range, 'Concentration': 0.5, 'Esterified': 0})
-trend_df_ester = pd.DataFrame({'Time': 7050, 'Load': 100, 'Temperature': trend_temp_range, 'Concentration': 0.5, 'Esterified': config.PLOT_ESTERIFIED_STATE})
-trend_df_base = create_features(trend_df_base)[X_cols_raw]
-trend_df_ester = create_features(trend_df_ester)[X_cols_raw]
-trend_base_trans = global_vif.transform(global_interact.transform(trend_df_base))
-trend_ester_trans = global_vif.transform(global_interact.transform(trend_df_ester))
-preds_base = np.maximum(best_model_overall.predict(trend_base_trans), config.PREDICTION_LOWER_BOUND)[:, 0]
-preds_ester = np.maximum(best_model_overall.predict(trend_ester_trans), config.PREDICTION_LOWER_BOUND)[:, 0]
+fig, axes = plt.subplots(1, 3, figsize=(15, 4), sharey=True)
+for i, res in enumerate(top3_trend_res):
+    model = res['Model']
+    trend_df_base = pd.DataFrame({'Time': 7050, 'Load': 100, 'Temperature': trend_temp_range, 'Concentration': 0.5, 'Esterified': 0})
+    trend_df_ester = pd.DataFrame({'Time': 7050, 'Load': 100, 'Temperature': trend_temp_range, 'Concentration': 0.5, 'Esterified': config.PLOT_ESTERIFIED_STATE})
+    trend_df_base = create_features(trend_df_base)[X_cols_raw]
+    trend_df_ester = create_features(trend_df_ester)[X_cols_raw]
+    trend_base_trans = global_vif.transform(global_interact.transform(trend_df_base))
+    trend_ester_trans = global_vif.transform(global_interact.transform(trend_df_ester))
+    preds_base = np.maximum(model.predict(trend_base_trans), config.PREDICTION_LOWER_BOUND)[:, 0]
+    preds_ester = np.maximum(model.predict(trend_ester_trans), config.PREDICTION_LOWER_BOUND)[:, 0]
+    
+    axes[i].plot(trend_temp_range, preds_base, marker='o', color='purple', label='Not esterified (0)')
+    axes[i].plot(trend_temp_range, preds_ester, marker='s', color='orange', label='Esterified Oil (1)')
+    axes[i].fill_between(trend_temp_range, preds_base, preds_ester, color='grey', alpha=0.2, label='Ester Advantage')
+    axes[i].set_title(res['Name'], fontsize=11)
+    axes[i].set_xlabel("Temperature [°C]")
+    if i == 0: axes[i].set_ylabel("Expected COF [-]")
+    axes[i].yaxis.set_major_formatter(FuncFormatter(lambda y, _: f'{y:g}'))
+    if i == 2: axes[i].legend(loc='upper right', fontsize=9)
 
-fig, ax = plt.subplots(figsize=(6.3, 3.15))
-plt.plot(trend_temp_range, preds_base, marker='o', color='purple', label='Not esterified (0)')
-plt.plot(trend_temp_range, preds_ester, marker='s', color='orange', label='Esterified Oil (1)')
-plt.fill_between(trend_temp_range, preds_base, preds_ester, color='grey', alpha=0.2, label='Ester Advantage')
-plt.xlabel("Temperature [°C]")
-plt.ylabel("Expected COF [-]")
-ymin, ymax = ax.get_ylim()
-ax.set_ylim(ymin, ymax + (ymax - ymin) * 0.35)
-plt.legend(loc='upper right')
-ax.yaxis.set_major_formatter(FuncFormatter(lambda y, _: f'{y:g}'))
-dynamic_descriptions["Temperature_Trend_Analysis.png"] = "Temperature Trend Analysis (Load: 100N, Conc: 0.50wt%)."
+plt.suptitle("Temperature Trend Analysis (Load: 100N, Conc: 0.50wt%)", y=1.05)
+dynamic_descriptions["Temperature_Trend_Analysis.png"] = "Temperature Trend Analysis (Load: 100N, Conc: 0.50wt%) across the Top 3 models."
 plt.savefig(os.path.join(config.RESULTS_DIR, "Temperature_Trend_Analysis.png"), dpi=config.PLOT_SETTINGS['dpi'], bbox_inches='tight', pad_inches=0.1)
 plt.close()
 
 print("\n--- Generating Trend Analysis Plot (Temperature vs COF) [Optimum Bonus] ---")
-trend_temp_range_sm = np.linspace(40, 120, 20)
-trend_df_base_sm = pd.DataFrame({'Time': 7050, 'Load': opt_load, 'Temperature': trend_temp_range_sm, 'Concentration': opt_conc, 'Esterified': 0})
-trend_df_ester_sm = pd.DataFrame({'Time': 7050, 'Load': opt_load, 'Temperature': trend_temp_range_sm, 'Concentration': opt_conc, 'Esterified': config.PLOT_ESTERIFIED_STATE})
-trend_df_base_sm = create_features(trend_df_base_sm)[X_cols_raw]
-trend_df_ester_sm = create_features(trend_df_ester_sm)[X_cols_raw]
-trend_base_trans_sm = global_vif.transform(global_interact.transform(trend_df_base_sm))
-trend_ester_trans_sm = global_vif.transform(global_interact.transform(trend_df_ester_sm))
-preds_base_sm = np.maximum(best_model_overall.predict(trend_base_trans_sm), config.PREDICTION_LOWER_BOUND)[:, 0]
-preds_ester_sm = np.maximum(best_model_overall.predict(trend_ester_trans_sm), config.PREDICTION_LOWER_BOUND)[:, 0]
+fig, axes = plt.subplots(1, 3, figsize=(15, 4), sharey=True)
+for i, res in enumerate(top3_trend_res):
+    model = res['Model']
+    trend_df_base_sm = pd.DataFrame({'Time': 7050, 'Load': trend_opt_load, 'Temperature': trend_temp_range, 'Concentration': trend_opt_conc, 'Esterified': 0})
+    trend_df_ester_sm = pd.DataFrame({'Time': 7050, 'Load': trend_opt_load, 'Temperature': trend_temp_range, 'Concentration': trend_opt_conc, 'Esterified': config.PLOT_ESTERIFIED_STATE})
+    trend_df_base_sm = create_features(trend_df_base_sm)[X_cols_raw]
+    trend_df_ester_sm = create_features(trend_df_ester_sm)[X_cols_raw]
+    trend_base_trans_sm = global_vif.transform(global_interact.transform(trend_df_base_sm))
+    trend_ester_trans_sm = global_vif.transform(global_interact.transform(trend_df_ester_sm))
+    preds_base_sm = np.maximum(model.predict(trend_base_trans_sm), config.PREDICTION_LOWER_BOUND)[:, 0]
+    preds_ester_sm = np.maximum(model.predict(trend_ester_trans_sm), config.PREDICTION_LOWER_BOUND)[:, 0]
+    
+    axes[i].plot(trend_temp_range, preds_base_sm, marker='o', color='purple', label='Not esterified (0)')
+    axes[i].plot(trend_temp_range, preds_ester_sm, marker='s', color='orange', label='Esterified Oil (1)')
+    axes[i].fill_between(trend_temp_range, preds_base_sm, preds_ester_sm, color='grey', alpha=0.2, label='Ester Advantage')
+    axes[i].set_title(res['Name'], fontsize=11)
+    axes[i].set_xlabel("Temperature [°C]")
+    if i == 0: axes[i].set_ylabel("Expected COF [-]")
+    axes[i].yaxis.set_major_formatter(FuncFormatter(lambda y, _: f'{y:g}'))
+    if i == 2: axes[i].legend(loc='upper right', fontsize=9)
 
-fig, ax = plt.subplots(figsize=(6.3, 3.15))
-plt.plot(trend_temp_range_sm, preds_base_sm, marker='o', color='purple', label='Not esterified (0)')
-plt.plot(trend_temp_range_sm, preds_ester_sm, marker='s', color='orange', label='Esterified Oil (1)')
-plt.fill_between(trend_temp_range_sm, preds_base_sm, preds_ester_sm, color='grey', alpha=0.2, label='Ester Advantage')
-plt.xlabel("Temperature [°C]")
-plt.ylabel("Expected COF [-]")
-ymin, ymax = ax.get_ylim()
-ax.set_ylim(ymin, ymax + (ymax - ymin) * 0.35)
-plt.legend(loc='upper right')
-ax.yaxis.set_major_formatter(FuncFormatter(lambda y, _: f'{y:g}'))
-dynamic_descriptions["Temperature_Trend_Analysis_Optimum.png"] = f"Temperature Trend Analysis at Optimum (Load: {int(opt_load)}N, Conc: {opt_conc:.2f}wt%)."
+plt.suptitle(f"Temperature Trend Analysis at Optimum (Load: {int(trend_opt_load)}N, Conc: {trend_opt_conc:.2f}wt%)", y=1.05)
+dynamic_descriptions["Temperature_Trend_Analysis_Optimum.png"] = f"Temperature Trend Analysis at Optimum (Load: {int(trend_opt_load)}N, Conc: {trend_opt_conc:.2f}wt%) across the Top 3 models."
 plt.savefig(os.path.join(config.RESULTS_DIR, "Temperature_Trend_Analysis_Optimum.png"), dpi=config.PLOT_SETTINGS['dpi'], bbox_inches='tight', pad_inches=0.1)
 plt.close()
 
-print("\n--- Generating Trend Analysis Plot (Load vs COF) ---")
+print("\n--- Generating Trend Analysis Plot (Load vs COF & Hertz vs COF) ---")
 trend_load_range = np.linspace(10, 200, 20)
-trend_df_base_load = pd.DataFrame({'Time': 7050, 'Load': trend_load_range, 'Temperature': 100, 'Concentration': 0.5, 'Esterified': 0})
-trend_df_ester_load = pd.DataFrame({'Time': 7050, 'Load': trend_load_range, 'Temperature': 100, 'Concentration': 0.5, 'Esterified': config.PLOT_ESTERIFIED_STATE})
-trend_df_base_load = create_features(trend_df_base_load)[X_cols_raw]
-trend_df_ester_load = create_features(trend_df_ester_load)[X_cols_raw]
-trend_base_trans_load = global_vif.transform(global_interact.transform(trend_df_base_load))
-trend_ester_trans_load = global_vif.transform(global_interact.transform(trend_df_ester_load))
-preds_base_load = np.maximum(best_model_overall.predict(trend_base_trans_load), config.PREDICTION_LOWER_BOUND)[:, 0]
-preds_ester_load = np.maximum(best_model_overall.predict(trend_ester_trans_load), config.PREDICTION_LOWER_BOUND)[:, 0]
-
-fig, ax = plt.subplots(figsize=(6.3, 3.15))
-plt.plot(trend_load_range, preds_base_load, marker='o', color='purple', label='Not esterified (0)')
-plt.plot(trend_load_range, preds_ester_load, marker='s', color='orange', label='Esterified Oil (1)')
-plt.fill_between(trend_load_range, preds_base_load, preds_ester_load, color='grey', alpha=0.2, label='Ester Advantage')
-plt.xlabel("Load [N]")
-plt.ylabel("Expected COF [-]")
-ymin, ymax = ax.get_ylim()
-ax.set_ylim(ymin, ymax + (ymax - ymin) * 0.35)
-plt.legend(loc='upper right')
-ax.yaxis.set_major_formatter(FuncFormatter(lambda y, _: f'{y:g}'))
-dynamic_descriptions["Load_Trend_Analysis.png"] = "Load Trend Analysis (Temp: 100°C, Conc: 0.50wt%)."
-plt.savefig(os.path.join(config.RESULTS_DIR, "Load_Trend_Analysis.png"), dpi=config.PLOT_SETTINGS['dpi'], bbox_inches='tight', pad_inches=0.1)
-plt.close()
-
-print("\n--- Generating Trend Analysis Plot (Hertz Stress vs COF) ---")
 E_star_trend = config.E_MODULUS / (2.0 * (1.0 - config.POISSON_RATIO**2))
 a_trend = np.cbrt((3.0 * trend_load_range * config.BALL_RADIUS) / (4.0 * E_star_trend))
 trend_hertz_range = (3.0 * trend_load_range) / (2.0 * np.pi * a_trend**2)
 
-fig, ax = plt.subplots(figsize=(6.3, 3.15))
-plt.plot(trend_hertz_range, preds_base_load, marker='o', color='purple', label='Not esterified (0)')
-plt.plot(trend_hertz_range, preds_ester_load, marker='s', color='orange', label='Esterified Oil (1)')
-plt.fill_between(trend_hertz_range, preds_base_load, preds_ester_load, color='grey', alpha=0.2, label='Ester Advantage')
-plt.xlabel("Max. Hertzian Stress [MPa]")
-plt.ylabel("Expected COF [-]")
-ymin, ymax = ax.get_ylim()
-ax.set_ylim(ymin, ymax + (ymax - ymin) * 0.35)
-plt.legend(loc='upper right')
-ax.yaxis.set_major_formatter(FuncFormatter(lambda y, _: f'{y:g}'))
-dynamic_descriptions["Hertz_Trend_Analysis.png"] = "Hertzian Contact Stress Trend Analysis (Temp: 100°C, Conc: 0.50wt%). Derived from the 10-200N load range."
-plt.savefig(os.path.join(config.RESULTS_DIR, "Hertz_Trend_Analysis.png"), dpi=config.PLOT_SETTINGS['dpi'], bbox_inches='tight', pad_inches=0.1)
-plt.close()
+fig_load, axes_load = plt.subplots(1, 3, figsize=(15, 4), sharey=True)
+fig_hertz, axes_hertz = plt.subplots(1, 3, figsize=(15, 4), sharey=True)
+
+for i, res in enumerate(top3_trend_res):
+    model = res['Model']
+    trend_df_base_load = pd.DataFrame({'Time': 7050, 'Load': trend_load_range, 'Temperature': 100, 'Concentration': 0.5, 'Esterified': 0})
+    trend_df_ester_load = pd.DataFrame({'Time': 7050, 'Load': trend_load_range, 'Temperature': 100, 'Concentration': 0.5, 'Esterified': config.PLOT_ESTERIFIED_STATE})
+    trend_df_base_load = create_features(trend_df_base_load)[X_cols_raw]
+    trend_df_ester_load = create_features(trend_df_ester_load)[X_cols_raw]
+    trend_base_trans_load = global_vif.transform(global_interact.transform(trend_df_base_load))
+    trend_ester_trans_load = global_vif.transform(global_interact.transform(trend_df_ester_load))
+    preds_base_load = np.maximum(model.predict(trend_base_trans_load), config.PREDICTION_LOWER_BOUND)[:, 0]
+    preds_ester_load = np.maximum(model.predict(trend_ester_trans_load), config.PREDICTION_LOWER_BOUND)[:, 0]
+
+    axes_load[i].plot(trend_load_range, preds_base_load, marker='o', color='purple', label='Not esterified (0)')
+    axes_load[i].plot(trend_load_range, preds_ester_load, marker='s', color='orange', label='Esterified Oil (1)')
+    axes_load[i].fill_between(trend_load_range, preds_base_load, preds_ester_load, color='grey', alpha=0.2, label='Ester Advantage')
+    axes_load[i].set_title(res['Name'], fontsize=11)
+    axes_load[i].set_xlabel("Load [N]")
+    if i == 0: axes_load[i].set_ylabel("Expected COF [-]")
+    axes_load[i].yaxis.set_major_formatter(FuncFormatter(lambda y, _: f'{y:g}'))
+    if i == 2: axes_load[i].legend(loc='upper right', fontsize=9)
+
+    axes_hertz[i].plot(trend_hertz_range, preds_base_load, marker='o', color='purple', label='Not esterified (0)')
+    axes_hertz[i].plot(trend_hertz_range, preds_ester_load, marker='s', color='orange', label='Esterified Oil (1)')
+    axes_hertz[i].fill_between(trend_hertz_range, preds_base_load, preds_ester_load, color='grey', alpha=0.2, label='Ester Advantage')
+    axes_hertz[i].set_title(res['Name'], fontsize=11)
+    axes_hertz[i].set_xlabel("Max. Hertzian Stress [MPa]")
+    if i == 0: axes_hertz[i].set_ylabel("Expected COF [-]")
+    axes_hertz[i].yaxis.set_major_formatter(FuncFormatter(lambda y, _: f'{y:g}'))
+    if i == 2: axes_hertz[i].legend(loc='upper right', fontsize=9)
+
+fig_load.suptitle("Load Trend Analysis (Temp: 100°C, Conc: 0.50wt%)", y=1.05)
+dynamic_descriptions["Load_Trend_Analysis.png"] = "Load Trend Analysis (Temp: 100°C, Conc: 0.50wt%) across the Top 3 models."
+fig_load.savefig(os.path.join(config.RESULTS_DIR, "Load_Trend_Analysis.png"), dpi=config.PLOT_SETTINGS['dpi'], bbox_inches='tight', pad_inches=0.1)
+plt.close(fig_load)
+
+fig_hertz.suptitle("Hertzian Contact Stress Trend Analysis (Temp: 100°C, Conc: 0.50wt%)", y=1.05)
+dynamic_descriptions["Hertz_Trend_Analysis.png"] = "Hertzian Contact Stress Trend Analysis across the Top 3 models. Derived from the 10-200N load range."
+fig_hertz.savefig(os.path.join(config.RESULTS_DIR, "Hertz_Trend_Analysis.png"), dpi=config.PLOT_SETTINGS['dpi'], bbox_inches='tight', pad_inches=0.1)
+plt.close(fig_hertz)
 
 print("\n--- Generating Trend Analysis Plot (Load vs COF) [Optimum Bonus] ---")
-trend_load_range_sm = np.linspace(10, 200, 20)
-trend_df_base_load_sm = pd.DataFrame({'Time': 7050, 'Load': trend_load_range_sm, 'Temperature': opt_temp, 'Concentration': opt_conc, 'Esterified': 0})
-trend_df_ester_load_sm = pd.DataFrame({'Time': 7050, 'Load': trend_load_range_sm, 'Temperature': opt_temp, 'Concentration': opt_conc, 'Esterified': config.PLOT_ESTERIFIED_STATE})
-trend_df_base_load_sm = create_features(trend_df_base_load_sm)[X_cols_raw]
-trend_df_ester_load_sm = create_features(trend_df_ester_load_sm)[X_cols_raw]
-trend_base_trans_load_sm = global_vif.transform(global_interact.transform(trend_df_base_load_sm))
-trend_ester_trans_load_sm = global_vif.transform(global_interact.transform(trend_df_ester_load_sm))
-preds_base_load_sm = np.maximum(best_model_overall.predict(trend_base_trans_load_sm), config.PREDICTION_LOWER_BOUND)[:, 0]
-preds_ester_load_sm = np.maximum(best_model_overall.predict(trend_ester_trans_load_sm), config.PREDICTION_LOWER_BOUND)[:, 0]
+fig, axes = plt.subplots(1, 3, figsize=(15, 4), sharey=True)
+for i, res in enumerate(top3_trend_res):
+    model = res['Model']
+    trend_df_base_load_sm = pd.DataFrame({'Time': 7050, 'Load': trend_load_range, 'Temperature': trend_opt_temp, 'Concentration': trend_opt_conc, 'Esterified': 0})
+    trend_df_ester_load_sm = pd.DataFrame({'Time': 7050, 'Load': trend_load_range, 'Temperature': trend_opt_temp, 'Concentration': trend_opt_conc, 'Esterified': config.PLOT_ESTERIFIED_STATE})
+    trend_df_base_load_sm = create_features(trend_df_base_load_sm)[X_cols_raw]
+    trend_df_ester_load_sm = create_features(trend_df_ester_load_sm)[X_cols_raw]
+    trend_base_trans_load_sm = global_vif.transform(global_interact.transform(trend_df_base_load_sm))
+    trend_ester_trans_load_sm = global_vif.transform(global_interact.transform(trend_df_ester_load_sm))
+    preds_base_load_sm = np.maximum(model.predict(trend_base_trans_load_sm), config.PREDICTION_LOWER_BOUND)[:, 0]
+    preds_ester_load_sm = np.maximum(model.predict(trend_ester_trans_load_sm), config.PREDICTION_LOWER_BOUND)[:, 0]
 
-fig, ax = plt.subplots(figsize=(6.3, 3.15))
-plt.plot(trend_load_range_sm, preds_base_load_sm, marker='o', color='purple', label='Not esterified (0)')
-plt.plot(trend_load_range_sm, preds_ester_load_sm, marker='s', color='orange', label='Esterified Oil (1)')
-plt.fill_between(trend_load_range_sm, preds_base_load_sm, preds_ester_load_sm, color='grey', alpha=0.2, label='Ester Advantage')
-plt.xlabel("Load [N]")
-plt.ylabel("Expected COF [-]")
-ymin, ymax = ax.get_ylim()
-ax.set_ylim(ymin, ymax + (ymax - ymin) * 0.35)
-plt.legend(loc='upper right')
-ax.yaxis.set_major_formatter(FuncFormatter(lambda y, _: f'{y:g}'))
-dynamic_descriptions["Load_Trend_Analysis_Optimum.png"] = f"Load Trend Analysis at Optimum (Temp: {int(opt_temp)}°C, Conc: {opt_conc:.2f}wt%)."
+    axes[i].plot(trend_load_range, preds_base_load_sm, marker='o', color='purple', label='Not esterified (0)')
+    axes[i].plot(trend_load_range, preds_ester_load_sm, marker='s', color='orange', label='Esterified Oil (1)')
+    axes[i].fill_between(trend_load_range, preds_base_load_sm, preds_ester_load_sm, color='grey', alpha=0.2, label='Ester Advantage')
+    axes[i].set_title(res['Name'], fontsize=11)
+    axes[i].set_xlabel("Load [N]")
+    if i == 0: axes[i].set_ylabel("Expected COF [-]")
+    axes[i].yaxis.set_major_formatter(FuncFormatter(lambda y, _: f'{y:g}'))
+    if i == 2: axes[i].legend(loc='upper right', fontsize=9)
+
+plt.suptitle(f"Load Trend Analysis at Optimum (Temp: {int(trend_opt_temp)}°C, Conc: {trend_opt_conc:.2f}wt%)", y=1.05)
+dynamic_descriptions["Load_Trend_Analysis_Optimum.png"] = f"Load Trend Analysis at Optimum (Temp: {int(trend_opt_temp)}°C, Conc: {trend_opt_conc:.2f}wt%) across the Top 3 models."
 plt.savefig(os.path.join(config.RESULTS_DIR, "Load_Trend_Analysis_Optimum.png"), dpi=config.PLOT_SETTINGS['dpi'], bbox_inches='tight', pad_inches=0.1)
 plt.close()
 
 print("\n--- Generating Trend Analysis Plot (Concentration vs COF) ---")
 trend_conc_range = np.linspace(0, 0.6, 20)
-trend_df_base_conc = pd.DataFrame({'Time': 7050, 'Load': 100, 'Temperature': 100, 'Concentration': trend_conc_range, 'Esterified': 0})
-trend_df_ester_conc = pd.DataFrame({'Time': 7050, 'Load': 100, 'Temperature': 100, 'Concentration': trend_conc_range, 'Esterified': config.PLOT_ESTERIFIED_STATE})
-trend_df_base_conc = create_features(trend_df_base_conc)[X_cols_raw]
-trend_df_ester_conc = create_features(trend_df_ester_conc)[X_cols_raw]
-trend_base_trans_conc = global_vif.transform(global_interact.transform(trend_df_base_conc))
-trend_ester_trans_conc = global_vif.transform(global_interact.transform(trend_df_ester_conc))
-preds_base_conc = np.maximum(best_model_overall.predict(trend_base_trans_conc), config.PREDICTION_LOWER_BOUND)[:, 0]
-preds_ester_conc = np.maximum(best_model_overall.predict(trend_ester_trans_conc), config.PREDICTION_LOWER_BOUND)[:, 0]
+fig, axes = plt.subplots(1, 3, figsize=(15, 4), sharey=True)
+for i, res in enumerate(top3_trend_res):
+    model = res['Model']
+    trend_df_base_conc = pd.DataFrame({'Time': 7050, 'Load': 100, 'Temperature': 100, 'Concentration': trend_conc_range, 'Esterified': 0})
+    trend_df_ester_conc = pd.DataFrame({'Time': 7050, 'Load': 100, 'Temperature': 100, 'Concentration': trend_conc_range, 'Esterified': config.PLOT_ESTERIFIED_STATE})
+    trend_df_base_conc = create_features(trend_df_base_conc)[X_cols_raw]
+    trend_df_ester_conc = create_features(trend_df_ester_conc)[X_cols_raw]
+    trend_base_trans_conc = global_vif.transform(global_interact.transform(trend_df_base_conc))
+    trend_ester_trans_conc = global_vif.transform(global_interact.transform(trend_df_ester_conc))
+    preds_base_conc = np.maximum(model.predict(trend_base_trans_conc), config.PREDICTION_LOWER_BOUND)[:, 0]
+    preds_ester_conc = np.maximum(model.predict(trend_ester_trans_conc), config.PREDICTION_LOWER_BOUND)[:, 0]
 
-fig, ax = plt.subplots(figsize=(6.3, 3.15))
-plt.plot(trend_conc_range, preds_base_conc, marker='o', color='purple', label='Not esterified (0)')
-plt.plot(trend_conc_range, preds_ester_conc, marker='s', color='orange', label='Esterified Oil (1)')
-plt.fill_between(trend_conc_range, preds_base_conc, preds_ester_conc, color='grey', alpha=0.2, label='Ester Advantage')
-plt.xlabel("Concentration [wt%]")
-plt.ylabel("Expected COF [-]")
-ymin, ymax = ax.get_ylim()
-ax.set_ylim(ymin, ymax + (ymax - ymin) * 0.35)
-plt.legend(loc='upper right')
-ax.yaxis.set_major_formatter(FuncFormatter(lambda y, _: f'{y:g}'))
-ax.xaxis.set_major_formatter(FuncFormatter(lambda x, _: f'{x:g}'))
-dynamic_descriptions["Concentration_Trend_Analysis.png"] = "Concentration Trend Analysis (Load: 100N, Temp: 100°C)."
+    axes[i].plot(trend_conc_range, preds_base_conc, marker='o', color='purple', label='Not esterified (0)')
+    axes[i].plot(trend_conc_range, preds_ester_conc, marker='s', color='orange', label='Esterified Oil (1)')
+    axes[i].fill_between(trend_conc_range, preds_base_conc, preds_ester_conc, color='grey', alpha=0.2, label='Ester Advantage')
+    axes[i].set_title(res['Name'], fontsize=11)
+    axes[i].set_xlabel("Concentration [wt%]")
+    if i == 0: axes[i].set_ylabel("Expected COF [-]")
+    axes[i].yaxis.set_major_formatter(FuncFormatter(lambda y, _: f'{y:g}'))
+    axes[i].xaxis.set_major_formatter(FuncFormatter(lambda x, _: f'{x:g}'))
+    if i == 2: axes[i].legend(loc='upper right', fontsize=9)
+
+plt.suptitle("Concentration Trend Analysis (Load: 100N, Temp: 100°C)", y=1.05)
+dynamic_descriptions["Concentration_Trend_Analysis.png"] = "Concentration Trend Analysis (Load: 100N, Temp: 100°C) across the Top 3 models."
 plt.savefig(os.path.join(config.RESULTS_DIR, "Concentration_Trend_Analysis.png"), dpi=config.PLOT_SETTINGS['dpi'], bbox_inches='tight', pad_inches=0.1)
 plt.close()
 
 print("\n--- Generating Trend Analysis Plot (Concentration vs COF) [Optimum Bonus] ---")
-trend_conc_range_sm = np.linspace(0, 0.6, 20)
-trend_df_base_conc_sm = pd.DataFrame({'Time': 7050, 'Load': opt_load, 'Temperature': opt_temp, 'Concentration': trend_conc_range_sm, 'Esterified': 0})
-trend_df_ester_conc_sm = pd.DataFrame({'Time': 7050, 'Load': opt_load, 'Temperature': opt_temp, 'Concentration': trend_conc_range_sm, 'Esterified': config.PLOT_ESTERIFIED_STATE})
-trend_df_base_conc_sm = create_features(trend_df_base_conc_sm)[X_cols_raw]
-trend_df_ester_conc_sm = create_features(trend_df_ester_conc_sm)[X_cols_raw]
-trend_base_trans_conc_sm = global_vif.transform(global_interact.transform(trend_df_base_conc_sm))
-trend_ester_trans_conc_sm = global_vif.transform(global_interact.transform(trend_df_ester_conc_sm))
-preds_base_conc_sm = np.maximum(best_model_overall.predict(trend_base_trans_conc_sm), config.PREDICTION_LOWER_BOUND)[:, 0]
-preds_ester_conc_sm = np.maximum(best_model_overall.predict(trend_ester_trans_conc_sm), config.PREDICTION_LOWER_BOUND)[:, 0]
+fig, axes = plt.subplots(1, 3, figsize=(15, 4), sharey=True)
+for i, res in enumerate(top3_trend_res):
+    model = res['Model']
+    trend_df_base_conc_sm = pd.DataFrame({'Time': 7050, 'Load': trend_opt_load, 'Temperature': trend_opt_temp, 'Concentration': trend_conc_range, 'Esterified': 0})
+    trend_df_ester_conc_sm = pd.DataFrame({'Time': 7050, 'Load': trend_opt_load, 'Temperature': trend_opt_temp, 'Concentration': trend_conc_range, 'Esterified': config.PLOT_ESTERIFIED_STATE})
+    trend_df_base_conc_sm = create_features(trend_df_base_conc_sm)[X_cols_raw]
+    trend_df_ester_conc_sm = create_features(trend_df_ester_conc_sm)[X_cols_raw]
+    trend_base_trans_conc_sm = global_vif.transform(global_interact.transform(trend_df_base_conc_sm))
+    trend_ester_trans_conc_sm = global_vif.transform(global_interact.transform(trend_df_ester_conc_sm))
+    preds_base_conc_sm = np.maximum(model.predict(trend_base_trans_conc_sm), config.PREDICTION_LOWER_BOUND)[:, 0]
+    preds_ester_conc_sm = np.maximum(model.predict(trend_ester_trans_conc_sm), config.PREDICTION_LOWER_BOUND)[:, 0]
 
-fig, ax = plt.subplots(figsize=(6.3, 3.15))
-plt.plot(trend_conc_range_sm, preds_base_conc_sm, marker='o', color='purple', label='Not esterified (0)')
-plt.plot(trend_conc_range_sm, preds_ester_conc_sm, marker='s', color='orange', label='Esterified Oil (1)')
-plt.fill_between(trend_conc_range_sm, preds_base_conc_sm, preds_ester_conc_sm, color='grey', alpha=0.2, label='Ester Advantage')
-plt.xlabel("Concentration [wt%]")
-plt.ylabel("Expected COF [-]")
-ymin, ymax = ax.get_ylim()
-ax.set_ylim(ymin, ymax + (ymax - ymin) * 0.35)
-plt.legend(loc='upper right')
+    axes[i].plot(trend_conc_range, preds_base_conc_sm, marker='o', color='purple', label='Not esterified (0)')
+    axes[i].plot(trend_conc_range, preds_ester_conc_sm, marker='s', color='orange', label='Esterified Oil (1)')
+    axes[i].fill_between(trend_conc_range, preds_base_conc_sm, preds_ester_conc_sm, color='grey', alpha=0.2, label='Ester Advantage')
+    axes[i].set_title(res['Name'], fontsize=11)
+    axes[i].set_xlabel("Concentration [wt%]")
+    if i == 0: axes[i].set_ylabel("Expected COF [-]")
+    axes[i].yaxis.set_major_formatter(FuncFormatter(lambda y, _: f'{y:g}'))
+    axes[i].xaxis.set_major_formatter(FuncFormatter(lambda x, _: f'{x:g}'))
+    if i == 2: axes[i].legend(loc='upper right', fontsize=9)
+
+plt.suptitle(f"Concentration Trend Analysis at Optimum (Load: {int(trend_opt_load)}N, Temp: {int(trend_opt_temp)}°C)", y=1.05)
+dynamic_descriptions["Concentration_Trend_Analysis_Optimum.png"] = f"Concentration Trend Analysis at Optimum (Load: {int(trend_opt_load)}N, Temp: {int(trend_opt_temp)}°C) across the Top 3 models."
+plt.savefig(os.path.join(config.RESULTS_DIR, "Concentration_Trend_Analysis_Optimum.png"), dpi=config.PLOT_SETTINGS['dpi'], bbox_inches='tight', pad_inches=0.1)
+plt.close()
+
+print("\n--- Generating Combined Model Trend Analysis (Esterified Only) ---")
+compare_model_names = ["XGBoost", "LightGBM", "CatBoost", "Ensemble (Top 3 Voting)"]
+compare_results = [r for r in results if r['Name'] in compare_model_names]
+
+# 1. Temperature Trend
+fig, ax = plt.subplots(figsize=(6.3, 4.0))
+for res in compare_results:
+    model = res['Model']
+    is_ens = "Ensemble" in res['Name']
+    c = '#911eb4' if is_ens else {'XGBoost': '#e6194B', 'LightGBM': '#3cb44b', 'CatBoost': '#4363d8'}.get(res['Name'], 'black')
+    m = 'D' if is_ens else 's'
+    ls = '--' if is_ens else '-'
+    lw = 2.5 if is_ens else 2.0
+    
+    trend_df = pd.DataFrame({'Time': 7050, 'Load': 100, 'Temperature': trend_temp_range, 'Concentration': 0.5, 'Esterified': 1})
+    trend_df = create_features(trend_df)[X_cols_raw]
+    trend_trans = global_vif.transform(global_interact.transform(trend_df))
+    preds = np.maximum(model.predict(trend_trans), config.PREDICTION_LOWER_BOUND)[:, 0]
+    ax.plot(trend_temp_range, preds, marker=m, color=c, linestyle=ls, linewidth=lw, label=res['Name'])
+ax.set_title("Temperature Trend (Esterified, Load: 100N, Conc: 0.5wt%)", fontsize=11)
+ax.set_xlabel("Temperature [°C]")
+ax.set_ylabel("Expected COF [-]")
+ax.yaxis.set_major_formatter(FuncFormatter(lambda y, _: f'{y:g}'))
+ax.legend(loc='upper right', fontsize=9)
+dynamic_descriptions["Combined_Model_Temperature_Trend.png"] = "Comparison of Esterified Oil Temperature Trends using XGBoost, LightGBM, CatBoost, and Ensemble."
+plt.savefig(os.path.join(config.RESULTS_DIR, "Combined_Model_Temperature_Trend.png"), dpi=config.PLOT_SETTINGS['dpi'], bbox_inches='tight', pad_inches=0.1)
+plt.close()
+
+# 2. Load Trend
+fig, ax = plt.subplots(figsize=(6.3, 4.0))
+for res in compare_results:
+    model = res['Model']
+    is_ens = "Ensemble" in res['Name']
+    c = '#911eb4' if is_ens else {'XGBoost': '#e6194B', 'LightGBM': '#3cb44b', 'CatBoost': '#4363d8'}.get(res['Name'], 'black')
+    m = 'D' if is_ens else 's'
+    ls = '--' if is_ens else '-'
+    lw = 2.5 if is_ens else 2.0
+    
+    trend_df = pd.DataFrame({'Time': 7050, 'Load': trend_load_range, 'Temperature': 100, 'Concentration': 0.5, 'Esterified': 1})
+    trend_df = create_features(trend_df)[X_cols_raw]
+    trend_trans = global_vif.transform(global_interact.transform(trend_df))
+    preds = np.maximum(model.predict(trend_trans), config.PREDICTION_LOWER_BOUND)[:, 0]
+    ax.plot(trend_load_range, preds, marker=m, color=c, linestyle=ls, linewidth=lw, label=res['Name'])
+ax.set_title("Load Trend (Esterified, Temp: 100°C, Conc: 0.5wt%)", fontsize=11)
+ax.set_xlabel("Load [N]")
+ax.set_ylabel("Expected COF [-]")
+ax.yaxis.set_major_formatter(FuncFormatter(lambda y, _: f'{y:g}'))
+ax.legend(loc='upper right', fontsize=9)
+dynamic_descriptions["Combined_Model_Load_Trend.png"] = "Comparison of Esterified Oil Load Trends using XGBoost, LightGBM, CatBoost, and Ensemble."
+plt.savefig(os.path.join(config.RESULTS_DIR, "Combined_Model_Load_Trend.png"), dpi=config.PLOT_SETTINGS['dpi'], bbox_inches='tight', pad_inches=0.1)
+plt.close()
+
+# 2.1 Load Trend (CatBoost vs Neural Network)
+fig, ax = plt.subplots(figsize=(6.3, 4.0))
+subset_compare_cb_mlp = [r for r in results if r['Name'] in ["CatBoost", "Neural Network (MLP)"]]
+for res in subset_compare_cb_mlp:
+    model = res['Model']
+    c = '#f58231' if "Neural" in res['Name'] else '#4363d8'
+    m = 'o' if "Neural" in res['Name'] else 's'
+    ls = '-'
+    lw = 2.0
+    
+    trend_df = pd.DataFrame({'Time': 7050, 'Load': trend_load_range, 'Temperature': 100, 'Concentration': 0.5, 'Esterified': 1})
+    trend_df = create_features(trend_df)[X_cols_raw]
+    trend_trans = global_vif.transform(global_interact.transform(trend_df))
+    preds = np.maximum(model.predict(trend_trans), config.PREDICTION_LOWER_BOUND)[:, 0]
+    ax.plot(trend_load_range, preds, marker=m, color=c, linestyle=ls, linewidth=lw, label=res['Name'])
+ax.set_title("Load Trend (CatBoost vs Neural Network) (Esterified)", fontsize=11)
+ax.set_xlabel("Load [N]")
+ax.set_ylabel("Expected COF [-]")
+ax.yaxis.set_major_formatter(FuncFormatter(lambda y, _: f'{y:g}'))
+ax.legend(loc='upper right', fontsize=9)
+dynamic_descriptions["Load_Trend_CatBoost_vs_MLP.png"] = "Comparison of Esterified Oil Load Trends using CatBoost and Neural Network."
+plt.savefig(os.path.join(config.RESULTS_DIR, "Load_Trend_CatBoost_vs_MLP.png"), dpi=config.PLOT_SETTINGS['dpi'], bbox_inches='tight', pad_inches=0.1)
+plt.close()
+
+# 3. Concentration Trend
+fig, ax = plt.subplots(figsize=(6.3, 4.0))
+for res in compare_results:
+    model = res['Model']
+    is_ens = "Ensemble" in res['Name']
+    c = '#911eb4' if is_ens else {'XGBoost': '#e6194B', 'LightGBM': '#3cb44b', 'CatBoost': '#4363d8'}.get(res['Name'], 'black')
+    m = 'D' if is_ens else 's'
+    ls = '--' if is_ens else '-'
+    lw = 2.5 if is_ens else 2.0
+    
+    trend_df = pd.DataFrame({'Time': 7050, 'Load': 100, 'Temperature': 100, 'Concentration': trend_conc_range, 'Esterified': 1})
+    trend_df = create_features(trend_df)[X_cols_raw]
+    trend_trans = global_vif.transform(global_interact.transform(trend_df))
+    preds = np.maximum(model.predict(trend_trans), config.PREDICTION_LOWER_BOUND)[:, 0]
+    ax.plot(trend_conc_range, preds, marker=m, color=c, linestyle=ls, linewidth=lw, label=res['Name'])
+ax.set_title("Concentration Trend (Esterified, Load: 100N, Temp: 100°C)", fontsize=11)
+ax.set_xlabel("Concentration [wt%]")
+ax.set_ylabel("Expected COF [-]")
 ax.yaxis.set_major_formatter(FuncFormatter(lambda y, _: f'{y:g}'))
 ax.xaxis.set_major_formatter(FuncFormatter(lambda x, _: f'{x:g}'))
-dynamic_descriptions["Concentration_Trend_Analysis_Optimum.png"] = f"Concentration Trend Analysis at Optimum (Load: {int(opt_load)}N, Temp: {int(opt_temp)}°C)."
-plt.savefig(os.path.join(config.RESULTS_DIR, "Concentration_Trend_Analysis_Optimum.png"), dpi=config.PLOT_SETTINGS['dpi'], bbox_inches='tight', pad_inches=0.1)
+ax.legend(loc='upper right', fontsize=9)
+dynamic_descriptions["Combined_Model_Concentration_Trend.png"] = "Comparison of Esterified Oil Concentration Trends using XGBoost, LightGBM, CatBoost, and Ensemble."
+plt.savefig(os.path.join(config.RESULTS_DIR, "Combined_Model_Concentration_Trend.png"), dpi=config.PLOT_SETTINGS['dpi'], bbox_inches='tight', pad_inches=0.1)
+plt.close()
+
+print("\n--- Generating Combined Model Trend Analysis (Esterified Only) [Optimum Bonus] ---")
+
+# 1. Temperature Trend Optimum
+fig, ax = plt.subplots(figsize=(6.3, 4.0))
+for res in compare_results:
+    model = res['Model']
+    is_ens = "Ensemble" in res['Name']
+    c = '#911eb4' if is_ens else {'XGBoost': '#e6194B', 'LightGBM': '#3cb44b', 'CatBoost': '#4363d8'}.get(res['Name'], 'black')
+    m = 'D' if is_ens else 's'
+    ls = '--' if is_ens else '-'
+    lw = 2.5 if is_ens else 2.0
+    
+    trend_df = pd.DataFrame({'Time': 7050, 'Load': trend_opt_load, 'Temperature': trend_temp_range, 'Concentration': trend_opt_conc, 'Esterified': 1})
+    trend_df = create_features(trend_df)[X_cols_raw]
+    trend_trans = global_vif.transform(global_interact.transform(trend_df))
+    preds = np.maximum(model.predict(trend_trans), config.PREDICTION_LOWER_BOUND)[:, 0]
+    ax.plot(trend_temp_range, preds, marker=m, color=c, linestyle=ls, linewidth=lw, label=res['Name'])
+ax.set_title(f"Temperature Trend at Optimum (Esterified, Load: {int(trend_opt_load)}N, Conc: {trend_opt_conc:.2f}wt%)", fontsize=11)
+ax.set_xlabel("Temperature [°C]")
+ax.set_ylabel("Expected COF [-]")
+ax.yaxis.set_major_formatter(FuncFormatter(lambda y, _: f'{y:g}'))
+ax.legend(loc='upper right', fontsize=9)
+dynamic_descriptions["Combined_Model_Temperature_Trend_Optimum.png"] = f"Comparison of Esterified Oil Temperature Trends at Optimum (Load: {int(trend_opt_load)}N, Conc: {trend_opt_conc:.2f}wt%) using XGBoost, LightGBM, CatBoost, and Ensemble."
+plt.savefig(os.path.join(config.RESULTS_DIR, "Combined_Model_Temperature_Trend_Optimum.png"), dpi=config.PLOT_SETTINGS['dpi'], bbox_inches='tight', pad_inches=0.1)
+plt.close()
+
+# 2. Load Trend Optimum
+fig, ax = plt.subplots(figsize=(6.3, 4.0))
+for res in compare_results:
+    model = res['Model']
+    is_ens = "Ensemble" in res['Name']
+    c = '#911eb4' if is_ens else {'XGBoost': '#e6194B', 'LightGBM': '#3cb44b', 'CatBoost': '#4363d8'}.get(res['Name'], 'black')
+    m = 'D' if is_ens else 's'
+    ls = '--' if is_ens else '-'
+    lw = 2.5 if is_ens else 2.0
+    
+    trend_df = pd.DataFrame({'Time': 7050, 'Load': trend_load_range, 'Temperature': trend_opt_temp, 'Concentration': trend_opt_conc, 'Esterified': 1})
+    trend_df = create_features(trend_df)[X_cols_raw]
+    trend_trans = global_vif.transform(global_interact.transform(trend_df))
+    preds = np.maximum(model.predict(trend_trans), config.PREDICTION_LOWER_BOUND)[:, 0]
+    ax.plot(trend_load_range, preds, marker=m, color=c, linestyle=ls, linewidth=lw, label=res['Name'])
+ax.set_title(f"Load Trend at Optimum (Esterified, Temp: {int(trend_opt_temp)}°C, Conc: {trend_opt_conc:.2f}wt%)", fontsize=11)
+ax.set_xlabel("Load [N]")
+ax.set_ylabel("Expected COF [-]")
+ax.yaxis.set_major_formatter(FuncFormatter(lambda y, _: f'{y:g}'))
+ax.legend(loc='upper right', fontsize=9)
+dynamic_descriptions["Combined_Model_Load_Trend_Optimum.png"] = f"Comparison of Esterified Oil Load Trends at Optimum (Temp: {int(trend_opt_temp)}°C, Conc: {trend_opt_conc:.2f}wt%) using XGBoost, LightGBM, CatBoost, and Ensemble."
+plt.savefig(os.path.join(config.RESULTS_DIR, "Combined_Model_Load_Trend_Optimum.png"), dpi=config.PLOT_SETTINGS['dpi'], bbox_inches='tight', pad_inches=0.1)
+plt.close()
+
+# 3. Concentration Trend Optimum
+fig, ax = plt.subplots(figsize=(6.3, 4.0))
+for res in compare_results:
+    model = res['Model']
+    is_ens = "Ensemble" in res['Name']
+    c = '#911eb4' if is_ens else {'XGBoost': '#e6194B', 'LightGBM': '#3cb44b', 'CatBoost': '#4363d8'}.get(res['Name'], 'black')
+    m = 'D' if is_ens else 's'
+    ls = '--' if is_ens else '-'
+    lw = 2.5 if is_ens else 2.0
+    
+    trend_df = pd.DataFrame({'Time': 7050, 'Load': trend_opt_load, 'Temperature': trend_opt_temp, 'Concentration': trend_conc_range, 'Esterified': 1})
+    trend_df = create_features(trend_df)[X_cols_raw]
+    trend_trans = global_vif.transform(global_interact.transform(trend_df))
+    preds = np.maximum(model.predict(trend_trans), config.PREDICTION_LOWER_BOUND)[:, 0]
+    ax.plot(trend_conc_range, preds, marker=m, color=c, linestyle=ls, linewidth=lw, label=res['Name'])
+ax.set_title(f"Concentration Trend at Opt. (Esterified, Load: {int(trend_opt_load)}N, Temp: {int(trend_opt_temp)}°C)", fontsize=11)
+ax.set_xlabel("Concentration [wt%]")
+ax.set_ylabel("Expected COF [-]")
+ax.yaxis.set_major_formatter(FuncFormatter(lambda y, _: f'{y:g}'))
+ax.xaxis.set_major_formatter(FuncFormatter(lambda x, _: f'{x:g}'))
+ax.legend(loc='upper right', fontsize=9)
+dynamic_descriptions["Combined_Model_Concentration_Trend_Optimum.png"] = f"Comparison of Esterified Oil Concentration Trends at Optimum (Load: {int(trend_opt_load)}N, Temp: {int(trend_opt_temp)}°C) using XGBoost, LightGBM, CatBoost, and Ensemble."
+plt.savefig(os.path.join(config.RESULTS_DIR, "Combined_Model_Concentration_Trend_Optimum.png"), dpi=config.PLOT_SETTINGS['dpi'], bbox_inches='tight', pad_inches=0.1)
 plt.close()
 
 print("\n--- 2D Válaszfelületek (Contour Plots) generálása... ---")
@@ -1507,6 +1763,15 @@ t3_range = np.linspace(40, 120, 50)
 c3_range = np.linspace(0, 0.6, 50)
 fn3 = plot_contour('Temperature', t3_range, 'Concentration', c3_range, {'Load': curr_opt_load}, 'Temp_Conc')
 dynamic_descriptions[fn3] = f"2D Contour Plot showing expected COF for Temperature vs Concentration at optimal Load ({int(curr_opt_load)}N)."
+
+fn4 = plot_contour('Concentration', c1_range, 'Load', l1_range, {'Temperature': 100}, 'Conc_Load_100C')
+dynamic_descriptions[fn4] = "Bonus 2D Contour Plot showing expected COF for Concentration vs Load at a fixed Temperature of 100 °C."
+
+fn5 = plot_contour('Load', l2_range, 'Temperature', t2_range, {'Concentration': 0.5}, 'Load_Temp_05wt')
+dynamic_descriptions[fn5] = "Bonus 2D Contour Plot showing expected COF for Load vs Temperature at a fixed Concentration of 0.5 wt%."
+
+fn6 = plot_contour('Temperature', t3_range, 'Concentration', c3_range, {'Load': 100}, 'Temp_Conc_100N')
+dynamic_descriptions[fn6] = "Bonus 2D Contour Plot showing expected COF for Temperature vs Concentration at a fixed Load of 100 N."
 
 plot_df = full_df.groupby('File_ID').agg({'Load': 'mean', 'Temperature': 'mean', 'Concentration': 'mean', 'Esterified': 'first'}).reset_index()
 
@@ -1590,22 +1855,26 @@ combined_plotly_html = plotly_3d_html + """
 <div class="no-print" style="margin-bottom: 30px; border: 1px solid #ccc; padding: 10px; background-color: #fafafa;">
 """ + plotly_3d_doe_html
 
-plt.figure(figsize=(10, 4))
-input_cols = ['Time', 'Load', 'Temperature', 'Concentration', 'Esterified']
+# Célváltozók és az összes (interakciókkal bővített) bemenet kombinálása
+corr_df = pd.concat([Y, X_interact], axis=1)
+
 target_cols = ['COF', 'Friction absolute integral']
-input_labels = ['Time', 'Load', 'Temperature', 'Concentration', 'Esterified']
-target_labels = ['COF', 'Friction Absolute Integral']
+input_cols = list(X_interact.columns)
 
-corr_matrix = full_df[target_cols + input_cols].corr().loc[target_cols, input_cols]
+target_labels = [config.NAME_MAPPING.get(col, col) for col in target_cols]
+input_labels = [config.NAME_MAPPING.get(col, col) for col in input_cols]
 
+corr_matrix = corr_df.corr().loc[target_cols, input_cols]
+
+plt.figure(figsize=(18, 4))
 im = plt.imshow(corr_matrix, cmap='coolwarm', interpolation='nearest', vmin=-1, vmax=1)
 plt.colorbar(im)
 plt.grid(False)
 for i in range(len(target_cols)):
     for j in range(len(input_cols)):
         val = corr_matrix.iloc[i, j]
-        plt.text(j, i, f"{val:.2f}", ha="center", va="center", color="white" if abs(val) > 0.5 else "black", fontsize=10)
-plt.xticks(range(len(input_cols)), input_labels, rotation=45, ha='right', fontsize=11)
+        plt.text(j, i, f"{val:.2f}", ha="center", va="center", color="white" if abs(val) > 0.5 else "black", fontsize=9)
+plt.xticks(range(len(input_cols)), input_labels, rotation=45, ha='right', fontsize=10)
 plt.yticks(range(len(target_cols)), target_labels, fontsize=11)
 plt.tight_layout()
 plt.savefig(os.path.join(config.RESULTS_DIR, "Correlation_matrix.png"), dpi=config.PLOT_SETTINGS['dpi'], bbox_inches='tight', pad_inches=0.1)
@@ -1618,14 +1887,20 @@ for res in results:
         model_name_safe = res['Name'].replace(' ', '_').replace('(', '').replace(')', '')
         lc_filename = f"Learning_Curve_{model_name_safe}.png"
         print(f"Generating learning curve for {res['Name']}...")
-        plot_learning_curve(res['Model'], X, Y, cv=GroupShuffleSplit(n_splits=config.CV_SPLITS, test_size=0.2, random_state=config.RANDOM_SEED), results_dir=config.RESULTS_DIR, groups=groups, num_files=len(np.unique(groups)), filename=lc_filename)
+        plot_learning_curve(res['Model'], X, Y, cv=GroupShuffleSplit(n_splits=config.CV_SPLITS, test_size=config.TEST_SIZE, random_state=config.RANDOM_SEED), results_dir=config.RESULTS_DIR, groups=groups, num_files=len(np.unique(groups)), filename=lc_filename)
         dynamic_descriptions[lc_filename] = f"Learning curve ({res['Name']})."
 
 html_path = os.path.join(config.RESULTS_DIR, "Eredmenyek_Riport.html")
 
 last_5m_mask = full_df['Time'] >= full_df.groupby('File_ID')['Time'].transform('max') - 300
-file_means = full_df[last_5m_mask].groupby('File_ID')[['COF', 'Friction absolute integral']].mean()
-file_means['Esterified'] = full_df.groupby('File_ID')['Esterified'].first()
+file_means = full_df[last_5m_mask].groupby('File_ID').agg({
+    'Load': 'mean',
+    'Temperature': 'mean',
+    'Concentration': 'mean',
+    'Esterified': 'first',
+    'COF': 'mean',
+    'Friction absolute integral': 'mean'
+})
 
 file_means_desc = file_means[['COF', 'Friction absolute integral']].describe()
 file_means_desc.columns = ['Average Coefficient of Friction (Last 5 minutes)', 'Average Friction Absolute Integral (Last 5 minutes)']
@@ -1692,6 +1967,24 @@ with pd.ExcelWriter(excel_path) as writer:
     opt_data = [{'Type': 'Esterified' if s == 1 else 'Not esterified', **r} for s, r in optimum_results.items()]
     pd.DataFrame(opt_data).drop(columns=['CurveTime', 'CurveCOF']).to_excel(writer, sheet_name='Optimums', index=False)
     doe_suggestions_combined.to_excel(writer, sheet_name='DoE_Suggestions', index=False)
+    
+    steady_export_df = file_means.copy().reset_index()
+    steady_export_df['Load'] = steady_export_df['Load'].round(0).astype(int)
+    steady_export_df['Temperature'] = steady_export_df['Temperature'].round(0).astype(int)
+    steady_export_df['Concentration'] = steady_export_df['Concentration'].round(2)
+    steady_export_df['Esterified'] = steady_export_df['Esterified'].astype(int)
+    
+    steady_export_df.rename(columns={
+        'File_ID': 'File ID',
+        'Load': 'Load [N]',
+        'Temperature': 'Temperature [°C]',
+        'Concentration': 'Concentration [wt%]',
+        'Esterified': 'Esterified [-]',
+        'COF': 'COF [-]',
+        'Friction absolute integral': 'FAI [-]'
+    }, inplace=True)
+    
+    steady_export_df.to_excel(writer, sheet_name='Steady_States', index=False)
 
 joblib.dump(best_model_overall, os.path.join(config.RESULTS_DIR, f"Best_Model_{best_model_name.replace(' ', '_')}.pkl"))
 print("\nPipeline completed successfully! Opening HTML report...")
