@@ -1,38 +1,60 @@
-# Tribology Data Analysis and Machine Learning Pipeline
+# ML Tribology Pipeline
 
-This repository contains a Python-based research framework designed for processing, analyzing, and modeling tribological measurement data. The system focuses on predicting the Coefficient of Friction (COF) and Friction Absolute Integral (FAI) using various machine learning architectures, complemented by Design of Experiments (DoE) suggestions and SHAP-based interpretability.
+Ez a projekt egy végpontok közötti (end-to-end) Machine Learning folyamat, amely tribométeres mérési adatok elemzésére, prediktív modellezésére és a kenési állapotok (súrlódási tényező - COF és FAI) optimalizálására szolgál.
 
-## System Overview
+## Főbb funkciók
+* **Adatfeldolgozás:** Zajszűrés (rolling mean), downsampling, és anomáliák (outlierek) automatikus eltávolítása.
+* **Feature Engineering:** Fizikai paraméterek (pl. Hertz-féle feszültség) és interakciós jellemzők generálása, VIF (Variance Inflation Factor) alapú multikollinearitás szűrés.
+* **Modell tanítás és optimalizálás:** 7 különböző algoritmus (XGBoost, LightGBM, CatBoost, Random Forest, MLP, KNN, Ridge) hiperparaméter-hangolása Optuna (Bayesian Optimization) segítségével.
+* **Ensemble:** A legjobb 3 modell automatikus kiválasztása és súlyozott kombinálása.
+* **Magyarázhatóság (XAI):** SHAP (SHapley Additive exPlanations) alapú ábrák a funkciók fontosságának és hatásának megértéséhez.
+* **Optimum keresés és DoE:** Kompromisszumos (Pareto) optimumok meghatározása az észteresített és alapolajokra, valamint új mérési pontok javaslata (Active Learning / Design of Experiments).
+* **Automatikus Riportálás:** Átfogó HTML és Excel riport generálása a futás legvégén a legfontosabb metrikákkal és diagramokkal.
 
-The pipeline automates the transition from raw Excel measurement files to a comprehensive research report. It includes specialized modules for physical feature engineering, such as calculating Hertzian contact stress and generating interaction terms between load, temperature, and concentration.
+## Könyvtárstruktúra
 
-### Core Components
+A projekt futtatásához az alábbi mappa-struktúrának kell rendelkezésre állnia a gyökérkönyvtárban:
 
-* Data Processing & Filtering: Automated loading of multi-sheet Excel files with rolling mean noise reduction and percentile-based outlier removal.
-* Feature Engineering: Implementation of custom transformers for VIF-based (Variance Inflation Factor) multicollinearity filtering and interaction feature generation.
-* Model Suite: A diverse set of regressors including XGBoost, LightGBM, CatBoost, Random Forest, and Multi-Layer Perceptrons (MLP), often wrapped in log-transform pipelines for target stabilization.
-* Optimization & DoE: Bayesian hyperparameter tuning via Optuna and an uncertainty-driven DoE module that suggests new measurement points based on model variance and spatial sparsity.
-* Reporting: Generation of interactive 3D distribution plots and detailed HTML reports summarizing model performance, Pareto fronts, and physical trend analyses.
+```text
+Thesis/
+├── Test_Data/        # Ide kell helyezni a nyers mérési adatokat (.xlsx formátumban)
+├── Results/          # A generált ábrák, riportok (.html, .xlsx) és modellek (.pkl) helye
+├── Cache/            # Ideiglenes fájlok a gyorsabb újrafutás érdekében
+├── main.py           # A fő futtatható szkript
+├── config.py         # Globális beállítások (könyvtárak, paraméterek, stílusok)
+├── utils.py          # Segédfüggvények (ábrázolás, adatkezelés, riportálás)
+├── transformers.py   # Egyedi scikit-learn transzformátorok (VIF, Interakciók, Scaler)
+├── requirements.txt  # A projekt Python függőségei
+└── README.md         # Ez a dokumentum
+```
+*(Megjegyzés: A `Results` és a `Cache` mappákat a program automatikusan létrehozza, ha nem léteznek).*
 
-## Project Structure
+## Telepítés
 
-* `main.py`: The central execution script that orchestrates data loading, model training, and result generation.
-* `config.py`: Centralized configuration for physical constants (e.g., E = 210000 MPa), file paths, academic plot styles, and model hyperparameters.
-* `transformers.py`: Custom Scikit-learn compatible classes for data scaling, interaction term generation, and VIF selection.
-* `utils.py`: Helper functions for time formatting, Pareto front calculation, and learning curve visualization.
+1. Győződj meg róla, hogy Python 3.9 vagy újabb verzió van telepítve a gépeden.
+2. Nyiss egy parancssort a projekt mappájában, és telepítsd a szükséges csomagokat:
 
-## Technical Details
+```bash
+pip install -r requirements.txt
+```
 
-The framework utilizes a TransformedTargetRegressor approach to handle the non-linear nature of friction data, applying a natural logarithm transformation to targets before training. Evaluation is performed using GroupKFold cross-validation to ensure the models generalize across different experimental files rather than just individual data points.
+## Használat
 
-For physical accuracy, the contact mechanics are modeled using the Hertzian stress formula:
-P_max = (3 * F) / (2 * pi * a^2)
-where 'a' represents the contact radius derived from the ball geometry and material elastic properties defined in the configuration.
+1. Helyezd a tribométeres méréseket tartalmazó Excel fájlokat (`.xlsx`) a `Test_Data` mappába. Az Excel fájloknak tartalmazniuk kell egy `Sheet Numeric SRA` (vagy elsődleges) munkalapot a megfelelő oszlopokkal (Time, Load, Temperature, COF stb.).
+2. Futtasd a fő szkriptet:
 
-## Outputs
+```bash
+python main.py
+```
 
-Upon execution, the system populates a Results directory with:
-1. HTML Report: A standalone summary containing all metrics and descriptions.
-2. Visualization Suite: SHAP impact plots, 3D data coverage maps, and COF heatmaps.
-3. Trained Model: The best performing pipeline saved as a joblib pickle for future inference.
-4. Excel Tables: Raw numerical data for further statistical processing.
+3. A futás befejeztével az eredmények megtalálhatók a `Results` mappában, és az összefoglaló `Eredmenyek_Riport.html` automatikusan megnyílik az alapértelmezett böngésződben.
+
+### Gyorsítótár (Cache) használata
+A program az adatok betöltését és a modellek betanítását alapértelmezetten gyorsítótárazza (cache) a gyorsabb fejlesztés és ábragenerálás érdekében. Ha a nyers adatok megváltoztak, vagy nulláról szeretnéd újratanítani a modelleket, állítsd a `config.py`-ban a `USE_CACHE` változót `False`-ra, vagy töröld a `Cache` mappa tartalmát.
+
+## Kiegészítő szkriptek
+A projekt tartalmaz néhány kiegészítő szkriptet is, amelyek a diplomamunkához szükséges extra ábrákat és folyamatábrákat generálják:
+* `Hertzian.py`: Legenerálja a Hertz-féle feszültségeloszlást bemutató 3D-s ábrát.
+* `Stribeck Curve.py`: Egy idealizált Stribeck-görbét rajzol ki.
+
+Ezeket a `python fájlnév.py` paranccsal külön lehet futtatni.
