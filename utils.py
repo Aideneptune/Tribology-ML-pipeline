@@ -9,7 +9,7 @@ from sklearn.model_selection import learning_curve
 import config
 
 def format_time(seconds):
-    """Másodpercek formázása olvasható szöveggé."""
+    """Format seconds into readable text."""
     if seconds < 60:
         return f"{seconds:.2f} s"
     minutes = int(seconds // 60)
@@ -17,11 +17,11 @@ def format_time(seconds):
     return f"{minutes}m {sec:.0f}s"
 
 def create_features(df):
-    """Származtatott jellemzők generálása."""
+    """Generate derived features."""
     df['Log_Time'] = np.log(df['Time'])
     df['Time_Squared'] = df['Time'] ** 2
     
-    # --- Hertz-féle maximális feszültség számítása ---
+    # --- Max Hertzian contact stress calculation ---
     E_star = config.E_MODULUS / (2.0 * (1.0 - config.POISSON_RATIO**2))
     a = np.cbrt((3.0 * df['Load'] * config.BALL_RADIUS) / (4.0 * E_star))
     df['Hertz_Stress_MPa'] = (3.0 * df['Load']) / (2.0 * np.pi * a**2)
@@ -29,7 +29,7 @@ def create_features(df):
     return df
 
 def filter_outliers_grouped(df, group_col, cols, low_q=0.01, high_q=0.99):
-    """Percentilis szűrés (Outlierek eltávolítása) csoportonként."""
+    """Remove outliers per group based on percentiles."""
     mask = pd.Series(True, index=df.index)
     for col in cols:
         bounds = df.groupby(group_col)[col].quantile([low_q, high_q]).unstack()
@@ -39,7 +39,7 @@ def filter_outliers_grouped(df, group_col, cols, low_q=0.01, high_q=0.99):
     return df[mask]
 
 def plot_pareto_front(results_dir, predictions, color_values, color_label="Temperature [°C]", title="Pareto front", filename="Pareto_Optimization.png", discrete=False):
-    """Pareto front vizualizáció és térdkapu pont keresés."""
+    """Visualize Pareto front and find the knee point."""
     cof = predictions[:, 0]
     fai = predictions[:, 1]
     costs = np.column_stack((cof, fai))
@@ -122,7 +122,7 @@ def plot_pareto_front(results_dir, predictions, color_values, color_label="Tempe
     return knee_cof, knee_fai, knee_orig_idx
 
 def plot_learning_curve(estimator, X, y, cv=None, n_jobs=-1, train_sizes=np.linspace(0.2, 1.0, 10), results_dir=".", groups=None, num_files=1, filename="Learning_Curve.png"):
-    """Tanulási görbe generálása és mentése."""
+    """Generate and save learning curve."""
     plt.figure(figsize=(6.3, 3.15))
     plt.xlabel("Number of training files/experiments")
     plt.ylabel(r"$R^2$ score")
@@ -145,14 +145,14 @@ def plot_learning_curve(estimator, X, y, cv=None, n_jobs=-1, train_sizes=np.lins
                      test_scores_mean + test_scores_std, alpha=0.1, color="orange")
     plt.plot(train_sizes_files, train_scores_mean, 'o-', color="purple", label="Training score")
     plt.plot(train_sizes_files, test_scores_mean, 'o-', color="orange", label="Cross-validation score")
-    plt.ylim(max(0.0, np.min(test_scores_mean) - 0.1), 1.25) # Extrában megemelve
+    plt.ylim(max(0.0, np.min(test_scores_mean) - 0.1), 1.25)
     plt.legend(loc="upper right")
     plt.savefig(os.path.join(results_dir, filename), dpi=config.PLOT_SETTINGS['dpi'], bbox_inches='tight', pad_inches=0.1)
     plt.savefig(os.path.join(results_dir, filename.replace('.png', '.svg')), format='svg', bbox_inches='tight', pad_inches=0.1)
     plt.close()
 
 def generate_html_report(results, xlsx_files, full_df, desc_df, filtered_desc_df, html_path, results_dir, doe_suggestions, optimum_results, shap_text="", timing_stats=None, dynamic_descriptions=None, distribution_summary=None, plotly_3d_html=None, safe_validation_points=None):
-    """HTML jelentés generálása a megadott PDF struktúra alapján."""
+    """Generate HTML report."""
     sorted_results = sorted(results, key=lambda x: x['R2_Test'], reverse=True)
     best_model_res = sorted_results[0]
     
@@ -160,7 +160,6 @@ def generate_html_report(results, xlsx_files, full_df, desc_df, filtered_desc_df
     if dynamic_descriptions:
         desc_map.update(dynamic_descriptions)
     
-    # CSS és Fejléc
     html_content = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
