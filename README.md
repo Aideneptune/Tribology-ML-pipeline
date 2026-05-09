@@ -9,7 +9,7 @@ Ez a projekt egy olyan machine learning folyamat, amely tribométeres mérési a
 * **Ensemble:** A legjobb 3 modell automatikus kiválasztása és súlyozott kombinálása.
 * **Magyarázhatóság (XAI):** SHAP (SHapley Additive exPlanations) alapú ábrák a funkciók fontosságának és hatásának megértéséhez.
 * **Optimum keresés és DoE:** Kompromisszumos (Pareto) optimumok meghatározása, valamint új mérési pontok javaslata (Active Learning / Sequential Design of Experiments).
-* **Automatikus Riportálás:** Átfogó HTML és Excel riport generálása a futás legvégén a legfontosabb metrikákkal és diagramokkal.
+* **Automatikus riportálás:** Átfogó HTML és Excel riport generálása a futás legvégén a legfontosabb metrikákkal és diagramokkal.
 
 ## Könyvtárstruktúra
 
