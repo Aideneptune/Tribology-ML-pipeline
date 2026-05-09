@@ -1,6 +1,6 @@
 # Súrlódási adatok elemzésére készített gépi tanulási pipeline
 
-<center>ENGLISH BELOW!</center>
+<p align="center">ENGLISH BELOW!</p>
 
 Ez a projekt egy olyan machine learning folyamat, amely tribométeres mérési adatok elemzésére, prediktív modellezésére és a kenési állapotok, súrlódási együtthatók optimalizálására szolgál. A kód kiegészítő, jövőbeli méréseket javasol a mérési paramétertér minél jobb lefedésére.
 
@@ -64,7 +64,7 @@ A projekt tartalmaz néhány kiegészítő szkriptet is, amelyek a diplomamunká
 Ezeket a `python fájlnév.py` paranccsal külön lehet futtatni.
 
 ---
-<center>English version</center>
+<p align="center">ENGLISH</p>
 
 # Machine learning pipeline for analyzing friction data
 
