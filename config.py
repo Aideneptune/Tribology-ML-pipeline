@@ -16,17 +16,13 @@ from sklearn.compose import TransformedTargetRegressor
 from sklearn.pipeline import Pipeline
 from transformers import PandasStandardScaler
 
-# --- ELÉRÉSI UTAK ---
-# A projekt fő könyvtára (automatikusan a config.py mappája)
+# --- PATHS ---
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
-# Az adatok forrása
 BASE_PATH = os.path.join(PROJECT_ROOT, "Test_Data")
-# Az eredmények mentési helye
 RESULTS_DIR = os.path.join(PROJECT_ROOT, "Results")
-# A gyorsítótár (cache) mentési helye
 CACHE_DIR = os.path.join(PROJECT_ROOT, "Cache")
 
-# --- ALAPVETŐ BEÁLLÍTÁSOK ---
+# --- BASIC SETTINGS ---
 USE_CACHE = True
 RANDOM_SEED = 42
 DOWNSAMPLING_RATE = 10
@@ -34,30 +30,35 @@ ROLLING_WINDOW_SIZE = 20
 PREDICTION_LOWER_BOUND = 0.001
 PLOT_ESTERIFIED_STATE = 1  # 1 = Esterified, 0 = Base Oil
 
-# --- FIZIKAI ÁLLANDÓK (HERTZ-FESZÜLTSÉG) ---
-E_MODULUS = 210000.0  # Rugalmassági modulusz [MPa]
-POISSON_RATIO = 0.3   # Poisson-tényező [-]
-BALL_RADIUS = 5.0     # Golyó sugara [mm]
+# --- VALIDATION POINT SETTINGS ---
+VALIDATION_LOAD = 180
+VALIDATION_TEMP = 100
+VALIDATION_CONC = 0.55
 
-# --- ÁBRÁK GLOBÁLIS BEÁLLÍTÁSAI ---
+# --- PHYSICAL CONSTANTS (HERTZ STRESS) ---
+E_MODULUS = 210000.0
+POISSON_RATIO = 0.3
+BALL_RADIUS = 5.0
+
+# --- PLOT SETTINGS ---
 PLOT_SETTINGS = {
     'dpi': 300,
     'cof_ylim': (0.0, 0.25)
 }
 
-# --- SHAP BEÁLLÍTÁSOK ---
+# --- SHAP SETTINGS ---
 SHAP_SAMPLE_SIZE = 1000
 
-# --- DOE BEÁLLÍTÁSOK ---
+# --- DOE SETTINGS ---
 UNCERTAINTY_WEIGHT = 0.5
 SPARSITY_WEIGHT = 0.5
 
-# --- GRID SEARCH LÉPÉSKÖZÖK (STEP SIZES) ---
+# --- GRID SEARCH STEP SIZES ---
 GRID_STEP_CONC = 0.05
 GRID_STEP_LOAD = 5
 GRID_STEP_TEMP = 5
 
-# --- AKADÉMIAI ÁBRAFORMÁZÁS BEÁLLÍTÁSA ---
+# --- ACADEMIC PLOT STYLE ---
 def set_academic_plot_style():
     plt.rcParams.update({
         'font.family': 'sans-serif',
@@ -97,16 +98,16 @@ def set_academic_plot_style():
         'axes.prop_cycle': cycler('color', ['k', 'r', 'b', 'g']) + cycler('ls', ['-', '--', ':', '-.'])
     })
 
-# --- MODELL TANÍTÁSI PARAMÉTEREK ---
+# --- MODEL TRAINING PARAMETERS ---
 TEST_SIZE = 0.1
 CV_SPLITS = 5
 SEARCH_ITERATIONS = 50
 
-# --- OSZLOPNEVEK ---
+# --- COLUMN NAMES ---
 FEATURE_COLS = ['Time', 'Log_Time', 'Time_Squared', 'Load', 'Temperature', 'Concentration', 'Esterified', 'Hertz_Stress_MPa']
 TARGET_COLS = ['COF', 'Friction absolute integral']
 
-# --- NÉV-LEKÉPEZŐ SZÓTÁR (HTML és Plot feliratokhoz) ---
+# --- NAME MAPPING DICTIONARY ---
 NAME_MAPPING = {
     'Log_Time': 'Logarithmic time',
     'Time_Squared': 'Squared time',
@@ -135,7 +136,7 @@ NAME_MAPPING = {
     'Time_Header': 'Tuning & Training Time / Prediction Time'
 }
 
-# --- HTML RIPORT LEÍRÁSOK ---
+# --- HTML REPORT DESCRIPTIONS ---
 IMAGE_DESCRIPTIONS = {
     "Effect_of_noise_filtering.png": "Comparison of raw measurement data and the smoothed curve using a rolling mean filter on the first data file.",
     "Effect_of_noise_filtering_2.png": "Comparison of raw measurement data and the smoothed curve using a rolling mean filter on a different data file for verification.",
@@ -154,7 +155,7 @@ IMAGE_DESCRIPTIONS = {
     "Concentration_Trend_Analysis.png": "Effect of Concentration on the expected COF, comparing Esterified Oil with Base Oil."
 }
 
-# --- MODELLEK ÉS HIPERPARAMÉTER HÁLÓK (GRID) ---
+# --- MODELS AND HYPERPARAMETER GRIDS ---
 models_config = {
     "XGBoost": {
         "model": TransformedTargetRegressor(
