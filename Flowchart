@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>ML Pipeline Flowchart - Polished</title>
+  <style>
+    @page {
+      size: A4 landscape;
+      margin: 2cm;
+    }
+    * { 
+      box-sizing: border-box; 
+      margin: 0; 
+      padding: 0; 
+    }
+    body {
+      font-family: "Segoe UI", Tahoma, sans-serif;
+      background: #f8f9fb;
+      display: flex;
+      justify-content: center;
+      padding: 20px;
+    }
+    .page {
+      width: 29cm;
+      height: 18cm;
+      background: #fff;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 4px 15px rgba(0,0,0,0.05);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    svg { 
+      display: block; 
+      width: 100%; 
+      height: 100%;
+    }
+  </style>
+</head>
+<body>
+<div class="page">
+  <svg viewBox="0 0 1200 700" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <marker id="arr" markerWidth="9" markerHeight="7" refX="9" refY="3.5" orient="auto">
+        <polygon points="0 0, 9 3.5, 0 7" fill="#333"/>
+      </marker>
+      <marker id="arr-sm" markerWidth="7" markerHeight="6" refX="7" refY="3" orient="auto">
+        <polygon points="0 0, 7 3, 0 6" fill="#8030b8"/>
+      </marker>
+      <filter id="shadow" x="-5%" y="-5%" width="115%" height="115%">
+        <feDropShadow dx="0" dy="4" stdDeviation="4" flood-color="#000000" flood-opacity="0.12"/>
+      </filter>
+    </defs>
+
+    <!-- LEFT COLUMN BACKGROUNDS -->
+    <rect x="20" y="30" width="550" height="230" rx="10" fill="#f4f7fc" stroke="#c8d6e8" stroke-width="1.5"/>
+    <text x="40" y="60" font-size="14pt" font-weight="bold" fill="#2c3e70" font-style="italic">Phase I, Data preparation &amp; Feature Engineering</text>
+
+    <rect x="20" y="280" width="550" height="390" rx="10" fill="#fff5f5" stroke="#e8caca" stroke-width="1.5"/>
+    <text x="40" y="310" font-size="14pt" font-weight="bold" fill="#7a1a1a" font-style="italic">Phase II, ML models</text>
+
+    <!-- RIGHT COLUMN BACKGROUNDS -->
+    <rect x="630" y="30" width="550" height="260" rx="10" fill="#f4fbf5" stroke="#bce0c6" stroke-width="1.5"/>
+    <text x="650" y="60" font-size="14pt" font-weight="bold" fill="#1a5a38" font-style="italic">Phase III, Refinement</text>
+
+    <rect x="630" y="310" width="550" height="230" rx="10" fill="#faf4fc" stroke="#d8c0e8" stroke-width="1.5"/>
+    <text x="650" y="340" font-size="14pt" font-weight="bold" fill="#4a006b" font-style="italic">Phase IV, Active Learning</text>
+
+    <!-- ==================== PHASE I ==================== -->
+    <rect x="195" y="75" width="200" height="40" rx="20" fill="#4a6faf" stroke="#2c4e8a" stroke-width="1.5" filter="url(#shadow)"/>
+    <text x="295" y="101" text-anchor="middle" font-size="14pt" fill="white" font-weight="bold">Raw tribometer data</text>
+
+    <line x1="295" y1="115" x2="295" y2="135" stroke="#333" stroke-width="1.5" marker-end="url(#arr)"/>
+
+    <rect x="45" y="135" width="500" height="50" rx="6" fill="#4a6faf" stroke="none" filter="url(#shadow)"/>
+    <text x="295" y="157" text-anchor="middle" font-size="13pt" fill="white" font-weight="bold">1. Preprocessing &amp; denoising</text>
+    <text x="295" y="176" text-anchor="middle" font-size="11pt" fill="#dde6ff">Data cleaning, downsampling, rolling-mean filtering</text>
+
+    <line x1="295" y1="185" x2="295" y2="205" stroke="#333" stroke-width="1.5" marker-end="url(#arr)"/>
+
+    <rect x="45" y="205" width="500" height="50" rx="6" fill="#4a6faf" stroke="none" filter="url(#shadow)"/>
+    <text x="295" y="227" text-anchor="middle" font-size="13pt" fill="white" font-weight="bold">2. Feature Engineering &amp; VIF Selection</text>
+    <text x="295" y="246" text-anchor="middle" font-size="11pt" fill="#c8f0da">Feature Engineering, interaction terms, VIF reduction</text>
+
+    <!-- Arrow I to II -->
+    <line x1="295" y1="255" x2="295" y2="330" stroke="#333" stroke-width="1.5" marker-end="url(#arr)"/>
+
+    <!-- ==================== PHASE II ==================== -->
+    <rect x="45" y="330" width="500" height="50" rx="6" fill="#b86000" stroke="none" filter="url(#shadow)"/>
+    <text x="295" y="352" text-anchor="middle" font-size="13pt" fill="white" font-weight="bold">3. Stratified train / test split</text>
+    <text x="295" y="371" text-anchor="middle" font-size="11pt" fill="#fff3cc">90/10 split, GroupKFold CV to prevent data leakage</text>
+
+    <line x1="295" y1="380" x2="295" y2="400" stroke="#333" stroke-width="1.5" marker-end="url(#arr)"/>
+
+    <rect x="45" y="400" width="500" height="70" rx="6" fill="#b86000" stroke="none" filter="url(#shadow)"/>
+    <text x="295" y="423" text-anchor="middle" font-size="13pt" fill="white" font-weight="bold">4. Bayesian hyperparameter tuning</text>
+    <text x="295" y="443" text-anchor="middle" font-size="11pt" fill="#ffd5d5">Optuna TPE (50 trials) optimizing mean R²</text>
+    <text x="295" y="460" text-anchor="middle" font-size="11pt" fill="#ffd5d5">Models used: XGBoost, LightGBM, CatBoost, RF, KNN, MLP, Ridge Reg.</text>
+
+    <line x1="295" y1="470" x2="295" y2="490" stroke="#333" stroke-width="1.5" marker-end="url(#arr)"/>
+
+    <rect x="45" y="490" width="500" height="50" rx="6" fill="#b86000" stroke="none" filter="url(#shadow)"/>
+    <text x="295" y="512" text-anchor="middle" font-size="13pt" fill="white" font-weight="bold">5. Model evaluation &amp; ensemble</text>
+    <text x="295" y="531" text-anchor="middle" font-size="11pt" fill="#e6d5ff">Top 3 weighted voting ensemble compared against best single model</text>
+
+    <line x1="295" y1="540" x2="295" y2="560" stroke="#333" stroke-width="1.5" marker-end="url(#arr)"/>
+
+    <rect x="120" y="560" width="350" height="40" rx="6" fill="#b86000" stroke="#7a3d00" stroke-width="1.5" filter="url(#shadow)"/>
+    <text x="295" y="586" text-anchor="middle" font-size="13pt" fill="white" font-weight="bold">Best base/ensemble model selected</text>
+
+    <!-- Path Phase II to Phase III -->
+    <path d="M 295 600 L 295 650 L 600 650 L 600 110 L 905 110 L 905 130" fill="none" stroke="#333" stroke-width="1.5" marker-end="url(#arr)"/>
+
+
+    <!-- ==================== PHASE III ==================== -->
+    <rect x="655" y="130" width="500" height="50" rx="6" fill="#2e7d52" stroke="none" filter="url(#shadow)"/>
+    <text x="905" y="152" text-anchor="middle" font-size="13pt" fill="white" font-weight="bold">6. Anomaly filtering &amp; retraining</text>
+    <text x="905" y="171" text-anchor="middle" font-size="11pt" fill="#c8f0da">Residual-based outlier removal and final model retraining</text>
+
+    <line x1="905" y1="180" x2="905" y2="200" stroke="#333" stroke-width="1.5" marker-end="url(#arr)"/>
+
+    <rect x="655" y="200" width="240" height="50" rx="6" fill="#2e7d52" stroke="none" filter="url(#shadow)"/>
+    <text x="775" y="222" text-anchor="middle" font-size="13pt" fill="white" font-weight="bold">7a. SHAP explainability</text>
+    <text x="775" y="241" text-anchor="middle" font-size="11pt" fill="#c8f0da">Summary &amp; dependence plots</text>
+
+    <rect x="915" y="200" width="240" height="50" rx="6" fill="#2e7d52" stroke="none" filter="url(#shadow)"/>
+    <text x="1035" y="222" text-anchor="middle" font-size="13pt" fill="white" font-weight="bold">7b. Pareto optimisation</text>
+    <text x="1035" y="241" text-anchor="middle" font-size="11pt" fill="#c8f0da">COF vs FAI optimal curves</text>
+
+    <!-- Merge Paths for 7a/7b to 8 -->
+    <line x1="775" y1="250" x2="775" y2="275" stroke="#555" stroke-width="1.5"/>
+    <line x1="1035" y1="250" x2="1035" y2="275" stroke="#555" stroke-width="1.5"/>
+    <line x1="775" y1="275" x2="1035" y2="275" stroke="#555" stroke-width="1.5"/>
+    <line x1="905" y1="275" x2="905" y2="360" stroke="#333" stroke-width="1.5" marker-end="url(#arr)"/>
+
+
+    <!-- ==================== PHASE IV ==================== -->
+    <rect x="655" y="360" width="500" height="70" rx="6" fill="#6a20a0" stroke="none" filter="url(#shadow)"/>
+    <text x="905" y="383" text-anchor="middle" font-size="13pt" fill="white" font-weight="bold">8. Uncertainty estimation &amp; DoE</text>
+    <text x="905" y="403" text-anchor="middle" font-size="11pt" fill="#e8d0ff">Model disagreement evaluation for active learning</text>
+    <text x="905" y="420" text-anchor="middle" font-size="11pt" fill="#e8d0ff">Sequential k-NN sparsity scoring to suggest new experiments</text>
+
+    <line x1="905" y1="430" x2="905" y2="450" stroke="#333" stroke-width="1.5" marker-end="url(#arr)"/>
+
+    <rect x="655" y="450" width="500" height="50" rx="6" fill="#6a20a0" stroke="none" filter="url(#shadow)"/>
+    <text x="905" y="472" text-anchor="middle" font-size="13pt" fill="white" font-weight="bold">9. Final results &amp; reporting</text>
+    <text x="905" y="491" text-anchor="middle" font-size="11pt" fill="#e8d0ff">HTML report, models, figures, optimal parameters</text>
+
+    <!-- Active Learning Loop Path -->
+    <text x="800" y="80" font-size="12pt" fill="#8030b8" font-weight="bold">Active Learning loop (when new data is available)</text>
+    <path d="M 1155 395 L 1185 395 L 1185 90 L 405 90" fill="none" stroke="#8030b8" stroke-width="2" stroke-dasharray="8,5" marker-end="url(#arr-sm)"/>
+
+  </svg>
+</div>
+</body>
+</html>
