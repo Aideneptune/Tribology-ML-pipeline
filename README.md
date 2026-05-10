@@ -20,15 +20,15 @@ A projekt futtatásához az alábbi mappa-struktúrának kell rendelkezésre ál
 ```text
 Thesis/
 ├── Test_Data/        # Ide kell helyezni a nyers mérési adatokat (.xlsx formátumban). A fájlok első sorába kell a paramétereket feltüntetni. Egy minta található a feltöltött repozitóriumban.
-├── Results/          # A generált ábrák, riportok (.html, .xlsx) és modellek (.pkl) helye
-├── Cache/            # Ideiglenes fájlok a gyorsabb újrafutás érdekében
-├── main.py           # A fő futtatható szkript
-├── config.py         # Globális beállítások (könyvtárak, paraméterek, diagramstílusok)
-├── utils.py          # Segédfüggvények (ábrázolás, adatkezelés, riportkészítés)
-├── transformers.py   # Egyedi scikit-learn transzformátorok (VIF, interakciók, Scaler)
-├── requirements.txt  # A projekt Python függőségei
-├── Sample.xlsx       # Tribológiai adatsor minta
-└── README.md         # Ez a dokumentum
+├── Results/          # A generált ábrák, riportok (.html, .xlsx) és modellek (.pkl) helye.
+├── Cache/            # Ideiglenes fájlok a gyorsabb újrafutás érdekében.
+├── main.py           # A fő futtatható szkript.
+├── config.py         # Globális beállítások (könyvtárak, paraméterek, diagramstílusok).
+├── utils.py          # Segédfüggvények (ábrázolás, adatkezelés, riportkészítés).
+├── transformers.py   # Egyedi scikit-learn transzformátorok (VIF, interakciók, Scaler).
+├── requirements.txt  # A projekt Python függőségei.
+├── Sample.xlsx       # Tribológiai adatsor minta. A fájlt a Test_Data mappába kell helyezni.
+└── README.md         # Ez a dokumentum.
 ```
 *(Megjegyzés: A `Results` és a `Cache` mappákat a program automatikusan létrehozza, ha nem léteznek).*
 
@@ -60,6 +60,7 @@ A projekt tartalmaz néhány kiegészítő szkriptet is, amelyek a diplomamunká
 * `Hertzian_Stress.py`: Legenerálja a Hertz-féle feszültségeloszlást bemutató 3D-s ábrát a használt anyagpárosításról. Az anyagjellemzők megváltoztathatóak a kódban.
 * `Stribeck_Curve.py`: Egy idealizált Stribeck-görbét rajzol ki.
 * `3D_GIFS.py`: Mérési pontokat tartalmazó, ide-oda mozgó .gif fájlokat készít.
+* `Flowchart.html`: A kód folyamatábrán való ábrázolása.
 
 Ezeket a `python fájlnév.py` paranccsal külön lehet futtatni.
 
@@ -93,7 +94,7 @@ Thesis/
 ├── utils.py          # Utility functions (plotting, data handling, report generation)
 ├── transformers.py   # Custom scikit-learn transformers (VIF, interactions, Scaler)
 ├── requirements.txt  # Python dependencies for the project
-├── Sample.xlsx       # Tribological data table sample
+├── Sample.xlsx       # Tribological data table sample. It must be placed in Test_Data.
 └── README.md         # This document
 ```
 *(Note: The `Results` and `Cache` folders are automatically created by the program if they do not exist).*
@@ -126,5 +127,6 @@ The project also includes several supplementary scripts that generate the extra 
 * `Hertzian_Stress.py`: Generates a 3D figure illustrating the Hertzian stress distribution for the used materials. The material properties can be modified in the code.
 * `Stribeck_Curve.py`: Plots an idealized Stribeck curve for demonstration.
 * `3D_GIFS.py`: Creates .gif files containing measurement points that move back and forth.
+* `Flowchart.html`: Flowchart visualization of the code.
 
 These can be run separately using the `python filename.py` command.
